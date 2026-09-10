@@ -74,15 +74,35 @@ a hair of its maximum always counts, since equalising can only approach the maxi
 *Allow unsafe filling* permits it and flags every affected transfer: filling still stops at the
 recipient's maximum, but the bottle and valve see the full donor pressure.
 
-The limit carries 0.1% of slack, because a 300 bar limit typed as whole psi comes back as 299.99 bar
-and a 300 bar donor would otherwise be rejected purely for having been measured in another unit. The
-slack is far inside the accuracy of any gauge you would read this off.
+The limit carries 1% of slack, to absorb both the rounding when a limit is typed in another unit (300
+bar as whole psi comes back as 299.99 bar) and ordinary gauge tolerance. In practice a 300 bar bottle
+may be filled from a donor reading up to 303 bar without being flagged.
 
 **Units.** Volume in L, cm³, in³ or ft³; pressure in bar, psi or MPa, chosen per bottle. Results are
 shown in the units of the bottle they belong to, so a donor bank in bar feeding a tank in psi reads
 correctly on both sides. Changing a unit converts every pressure on that bottle — current, maximum,
 minimum and target — so it re-expresses the same physical bottle rather than reinterpreting the
 numbers.
+
+## Languages
+
+The interface ships in English and German. The language follows the browser on
+first load and can be switched from the header; the choice is remembered. Numbers follow the language
+too — 253.8 bar in English, 253,8 bar in German — and the number fields accept either a decimal point
+or a decimal comma, whichever you type. (They are text fields rather than `type="number"` inputs
+precisely because those silently discard a decimal comma: a German user typing 6,5 would end up with
+a 65 litre bottle.)
+
+Every string lives in `assets/i18n.js`, one entry per key with all languages side by side. Static
+markup carries its key in a `data-i18n` attribute (`data-i18n-html` where the text has inline markup,
+`data-i18n-title` / `data-i18n-aria` for attributes), so the whole page can be re-lettered without
+being rebuilt. Plural forms come in `.one` / `.many` pairs resolved by `tn()`. `test/i18n.test.js`
+checks that every key exists in every language, that placeholders and inline markup match between
+languages, that both plural forms are present, and that the app and the dictionary agree in both
+directions — no missing keys, no unused ones.
+
+To add a language: add its code to `LANGS`, add that code to every entry in the file, and the test
+will tell you what you missed.
 
 ## Running it
 
@@ -97,8 +117,10 @@ The calculation core (`assets/calc.js`) has no DOM dependencies and is covered b
 runner:
 
 ```
-node test/calc.test.js
+node test/calc.test.js && node test/i18n.test.js
 ```
+
+or `npm test`.
 
 The tests check unit conversion, conservation of gas content across every transfer, the maximum-pressure
 cap, the safety gate, recipient cycling, per-bottle fill targets and their clamping, and that the
@@ -114,11 +136,13 @@ Push this directory as a repository, then in **Settings → Pages** choose *Depl
 ## Layout
 
 ```
-index.html          markup and the explanatory notes
+index.html          markup, with translation keys as data attributes
 assets/calc.js      units, equalisation, campaign simulation (no DOM)
+assets/i18n.js      every user-visible string, English and German
 assets/app.js       state, bottle SVGs, plan rendering
 assets/styles.css   theme tokens and layout
-test/calc.test.js   node test/calc.test.js
+test/calc.test.js   the physics and the strategies
+test/i18n.test.js   translation completeness and wiring
 ```
 
 ## Disclaimer

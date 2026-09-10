@@ -3,7 +3,11 @@
   'use strict';
 
   var G = window.GasFill;
+  var t = window.I18N.t;
+  var tn = window.I18N.tn;
+  var nf = window.I18N.nf;
   var STORE_KEY = 'gasfill.state.v1';
+  var LANG_KEY = 'gasfill.lang';
   var VOL_DECIMALS = { L: 1, cm3: 0, in3: 0, ft3: 2 };
   var PRESS_DECIMALS = { bar: 1, psi: 0, MPa: 2 };
   var uid = 0;
@@ -79,15 +83,13 @@
   /* ------------------------------------------------------------ formatting */
 
   function fmtP(bar, unit) {
-    var v = G.fromBar(bar, unit);
-    return v.toFixed(PRESS_DECIMALS[unit]) + ' ' + G.PRESSURE_UNITS[unit].label;
+    return fmtPNum(bar, unit) + ' ' + G.PRESSURE_UNITS[unit].label;
   }
   function fmtPNum(bar, unit) {
-    return G.fromBar(bar, unit).toFixed(PRESS_DECIMALS[unit]);
+    return nf(G.fromBar(bar, unit), PRESS_DECIMALS[unit]);
   }
   function fmtV(litre, unit) {
-    var v = G.fromLitre(litre, unit);
-    return v.toFixed(VOL_DECIMALS[unit]) + ' ' + G.VOLUME_UNITS[unit].label;
+    return nf(G.fromLitre(litre, unit), VOL_DECIMALS[unit]) + ' ' + G.VOLUME_UNITS[unit].label;
   }
   /* The unit shared by every recipient, or null when they disagree. */
   function sharedRecipientUnit(key) {
@@ -105,8 +107,22 @@
     var vu = sharedRecipientUnit('volumeUnit');
     return (vu === 'in3' || vu === 'ft3') ? 'ft3' : 'L';
   }
+  /* Number fields are plain text, because <input type="number"> silently drops
+     a decimal comma: a German user typing "6,5" would end up with 65.  Values
+     are shown with the decimal separator of the language and read back
+     accepting either, and never carry a thousands separator, which would be
+     ambiguous against a decimal point. */
+  function fieldNum(value) {
+    var text = String(value);
+    return window.I18N.getLang() === 'de' ? text.replace('.', ',') : text;
+  }
+  function parseField(raw) {
+    var v = parseFloat(String(raw).replace(/\s/g, '').replace(',', '.'));
+    return isFinite(v) ? Math.max(0, v) : 0;
+  }
+
   function fmtAir(litres) {
-    return Math.round(G.fromLitre(litres, airUnit())).toLocaleString();
+    return nf(Math.round(G.fromLitre(litres, airUnit())), 0);
   }
 
   function esc(s) {
@@ -135,9 +151,9 @@
     var tone = opts.tone ? ' ' + opts.tone : '';
 
     var ticks = '';
-    (opts.ticks || []).forEach(function (t) {
-      var y = bodyTop + bodyH * (1 - Math.max(0, Math.min(1, t.frac)));
-      ticks += '<line class="tick ' + (t.kind || '') + '" x1="1" x2="' + (w - 1) + '" y1="' +
+    (opts.ticks || []).forEach(function (tick) {
+      var y = bodyTop + bodyH * (1 - Math.max(0, Math.min(1, tick.frac)));
+      ticks += '<line class="tick ' + (tick.kind || '') + '" x1="1" x2="' + (w - 1) + '" y1="' +
                y.toFixed(2) + '" y2="' + y.toFixed(2) + '"></line>';
     });
 
@@ -176,7 +192,8 @@
   function numField(label, key, value, unitKind, unitValue, title) {
     return '<label class="field"' + (title ? ' title="' + esc(title) + '"' : '') +
       '><span>' + label + '</span><div class="combo">' +
-      '<input type="number" step="any" min="0" data-key="' + key + '" value="' + value + '">' +
+      '<input type="text" inputmode="decimal" autocomplete="off" spellcheck="false" data-num="1"' +
+        ' data-key="' + key + '" value="' + esc(fieldNum(value)) + '">' +
       (unitKind ? unitSelect(unitKind, unitValue) : '') + '</div></label>';
   }
 
@@ -188,7 +205,7 @@
   }
   function setField(row, key, value) {
     var el = row.querySelector('input[data-key="' + key + '"]');
-    if (el) el.value = value;
+    if (el) el.value = fieldNum(value);
   }
 
   function buildRow(model, kind) {
@@ -196,44 +213,40 @@
     row.className = 'brow';
     row.dataset.kind = kind;
     var fields =
-      '<label class="field brow-name"><span>Name</span><input type="text" data-key="name" value="' +
-        esc(model.name) + '" maxlength="24"></label>' +
-      numField('Volume', 'volume', model.volume, 'volume', model.volumeUnit) +
-      numField('Pressure', 'pressure', model.pressure, 'pressure', model.pressureUnit);
+      '<label class="field brow-name"><span>' + t('field.name') +
+        '</span><input type="text" data-key="name" value="' + esc(model.name) + '" maxlength="24"></label>' +
+      numField(t('field.volume'), 'volume', model.volume, 'volume', model.volumeUnit) +
+      numField(t('field.pressure'), 'pressure', model.pressure, 'pressure', model.pressureUnit);
     if (kind === 'recipient') {
-      fields += numField('Max pressure', 'max', model.max, null, null,
-                  'Highest working pressure. Transfers stop here and no donor above it is connected ' +
-                  'unless unsafe filling is allowed.') +
-                numField('Min pressure', 'min', model.min, null, null,
-                  'The bottle comes back for a refill at this pressure.') +
-                numField('Fill target', 'target', model.target, null, null,
-                  'A fill counts once it reaches this pressure. The bottle then goes into service and ' +
-                  'returns at its minimum for the next fill.');
+      fields += numField(t('field.max'), 'max', model.max, null, null, t('field.max.title')) +
+                numField(t('field.min'), 'min', model.min, null, null, t('field.min.title')) +
+                numField(t('field.target'), 'target', model.target, null, null, t('field.target.title'));
     }
     row.innerHTML =
       '<div class="brow-viz"></div>' +
       '<div class="brow-fields">' + fields + '</div>' +
-      '<button class="brow-del" type="button" title="Remove" aria-label="Remove bottle">&times;</button>';
+      '<button class="brow-del" type="button" title="' + esc(t('btn.remove.title')) +
+        '" aria-label="' + esc(t('btn.remove.aria')) + '">&times;</button>';
     row._model = model;
 
     row.addEventListener('input', function (ev) {
-      var t = ev.target, key = t.dataset.key, unit = t.dataset.unit;
+      var el = ev.target, key = el.dataset.key, unit = el.dataset.unit;
       if (key) {
-        model[key] = t.type === 'number' ? (parseFloat(t.value) || 0) : t.value;
+        model[key] = el.dataset.num ? parseField(el.value) : el.value;
       } else if (unit === 'volume') {
         var litres = volL(model);
-        model.volumeUnit = t.value;
-        model.volume = roundTo(G.fromLitre(litres, t.value), VOL_DECIMALS[t.value]);
+        model.volumeUnit = el.value;
+        model.volume = roundTo(G.fromLitre(litres, el.value), VOL_DECIMALS[el.value]);
         setField(row, 'volume', model.volume);
       } else if (unit === 'pressure') {
         var keys = ['pressure', 'max', 'min', 'target'];
         var bars = keys.map(function (k) {
           return model[k] == null ? null : G.toBar(model[k], model.pressureUnit);
         });
-        model.pressureUnit = t.value;
+        model.pressureUnit = el.value;
         keys.forEach(function (k, i) {
           if (bars[i] == null) return;
-          model[k] = roundTo(G.fromBar(bars[i], t.value), PRESS_DECIMALS[t.value]);
+          model[k] = roundTo(G.fromBar(bars[i], el.value), PRESS_DECIMALS[el.value]);
           setField(row, k, model[k]);
         });
       }
@@ -257,7 +270,7 @@
       if (!list.length) {
         var p = document.createElement('p');
         p.className = 'empty';
-        p.textContent = 'No ' + kind + ' bottles — add one to start.';
+        p.textContent = t(kind === 'donor' ? 'list.emptyDonors' : 'list.emptyRecipients');
         host.appendChild(p);
         return;
       }
@@ -284,7 +297,7 @@
       }
       row.classList.toggle('is-invalid', invalid);
       viz.innerHTML = bottleSVG({ w: 44, h: 106, frac: frac, ticks: ticks, tone: tone,
-        label: m.name + ' at ' + fmtP(p, m.pressureUnit) }) +
+        label: t('bottle.aria', { name: m.name, pressure: fmtP(p, m.pressureUnit) }) }) +
         '<div class="bottle-cap">' + fmtPNum(p, m.pressureUnit) + '</div>';
     });
   }
@@ -316,24 +329,24 @@
   function validate() {
     var issues = [];
     state.recipients.forEach(function (r) {
-      if (volL(r) <= 0) issues.push(['error', esc(r.name) + ': volume must be greater than zero.']);
+      if (volL(r) <= 0) issues.push(['error', t('issue.volumeZero', { name: esc(r.name) })]);
       if (maxBar(r) <= minBar(r)) {
-        issues.push(['error', esc(r.name) + ': maximum pressure must be above the minimum pressure.']);
+        issues.push(['error', t('issue.maxNotAboveMin', { name: esc(r.name) })]);
       }
       if (targetBar(r) <= minBar(r) + 1e-9) {
-        issues.push(['error', esc(r.name) + ': the fill target must be above the minimum pressure, ' +
-          'otherwise a bottle would count as filled the moment it is topped up at all.']);
+        issues.push(['error', t('issue.targetBelowMin', { name: esc(r.name) })]);
       } else if (targetBar(r) > maxBar(r) + 1e-9) {
-        issues.push(['warn', esc(r.name) + ': the fill target sits above the maximum working pressure — ' +
-          fmtP(maxBar(r), r.pressureUnit) + ' is used instead.']);
+        issues.push(['warn', t('issue.targetAboveMax', {
+          name: esc(r.name), max: fmtP(maxBar(r), r.pressureUnit) })]);
       }
       if (G.exceedsMax(pBar(r), maxBar(r))) {
-        issues.push(['warn', esc(r.name) + ' already sits above its maximum working pressure (' +
-          fmtP(pBar(r), r.pressureUnit) + ' > ' + fmtP(maxBar(r), r.pressureUnit) + ') — it cannot be filled.']);
+        issues.push(['warn', t('issue.aboveMax', {
+          name: esc(r.name), pressure: fmtP(pBar(r), r.pressureUnit),
+          max: fmtP(maxBar(r), r.pressureUnit) })]);
       }
     });
     state.donors.forEach(function (d) {
-      if (volL(d) <= 0) issues.push(['error', esc(d.name) + ': volume must be greater than zero.']);
+      if (volL(d) <= 0) issues.push(['error', t('issue.volumeZero', { name: esc(d.name) })]);
     });
     if (!state.allowUnsafe) {
       var blocked = state.donors.filter(function (d) {
@@ -341,10 +354,8 @@
       });
       if (blocked.length) {
         var names = blocked.map(function (d) { return esc(d.name); });
-        issues.push(['warn', names.join(', ') + (names.length === 1 ? ' exceeds' : ' exceed') +
-          ' a recipient maximum working pressure and ' + (names.length === 1 ? 'is' : 'are') +
-          ' held back. Enable “Allow unsafe filling” to use ' +
-          (names.length === 1 ? 'it' : 'them') + ' anyway.']);
+        issues.push(['warn', t(names.length === 1 ? 'issue.blockedOne' : 'issue.blockedMany',
+          { names: names.join(', ') })]);
       }
     }
     return issues;
@@ -355,23 +366,24 @@
   function statBlock(result) {
     var pu = statPressureUnit();
     var tiles = [
-      ['accent', result.usableFills, result.usableFills === 1 ? 'Fill delivered' : 'Fills delivered'],
+      ['accent', result.usableFills, tn('stat.fills', result.usableFills)],
       ['accent', result.usableFills ? fmtPNum(result.avgFillPressureBar, pu) : '—',
-        'Average after fill (' + G.PRESSURE_UNITS[pu].label + ')'],
-      ['', fmtAir(result.usableFreeAirL), 'Usable air delivered (' + G.VOLUME_UNITS[airUnit()].label + ')'],
-      ['', result.transferCount, 'Transfers'],
-      ['', Math.round(result.bankUsedFraction * 100) + '%', 'Donor bank used']
+        t('stat.avg', { unit: G.PRESSURE_UNITS[pu].label })],
+      ['', fmtAir(result.usableFreeAirL),
+        t('stat.usableAir', { unit: G.VOLUME_UNITS[airUnit()].label })],
+      ['', result.transferCount, t('stat.transfers')],
+      ['', Math.round(result.bankUsedFraction * 100) + '%', t('stat.bankUsed')]
     ];
-    var html = tiles.map(function (t) {
-      return '<div class="stat ' + t[0] + '"><div class="stat-v">' + t[1] + '</div><div class="stat-l">' +
-        t[2] + '</div></div>';
+    var html = tiles.map(function (tile) {
+      return '<div class="stat ' + tile[0] + '"><div class="stat-v">' + tile[1] +
+        '</div><div class="stat-l">' + tile[2] + '</div></div>';
     }).join('');
     if (result.recipients.length > 1) {
       var perRecipient = result.recipients.map(function (r) {
         return esc(r.name) + ' ' + r.fills + '×';
       }).join(' · ');
       html += '<div class="stat"><div class="stat-v" style="font-size:.95rem">' + perRecipient +
-        '</div><div class="stat-l">Per bottle</div></div>';
+        '</div><div class="stat-l">' + t('stat.perBottle') + '</div></div>';
     }
     return html;
   }
@@ -384,29 +396,27 @@
   function comparisonHTML(smart, dumb) {
     var pu = statPressureUnit();
     var au = G.VOLUME_UNITS[airUnit()].label;
-    var rows = [['smart', 'Cascade', smart], ['dumb', 'Sequential', dumb]].map(function (row) {
+    var rows = [['smart', t('cmp.cascade'), smart], ['dumb', t('cmp.sequential'), dumb]].map(function (row) {
       var r = row[2];
       return '<tr' + (state.method === row[0] ? ' class="is-active"' : '') + '>' +
         '<th scope="row">' + row[1] +
-          (state.method === row[0] ? ' <span class="cmp-now">in use</span>' : '') + '</th>' +
+          (state.method === row[0] ? ' <span class="cmp-now">' + t('cmp.inUse') + '</span>' : '') + '</th>' +
         '<td>' + r.usableFills + '</td>' +
         '<td>' + (r.usableFills ? fmtPNum(r.avgFillPressureBar, pu) : '—') + '</td>' +
         '<td>' + fmtAir(r.usableFreeAirL) + '</td>' +
         '<td>' + Math.round(r.bankUsedFraction * 100) + '%</td></tr>';
     }).join('');
 
-    return '<table class="cmp"><thead><tr><th scope="col">Method</th>' +
-      '<th scope="col">Fills</th>' +
-      '<th scope="col">Avg. after fill (' + G.PRESSURE_UNITS[pu].label + ')</th>' +
-      '<th scope="col">Usable air (' + au + ')</th>' +
-      '<th scope="col">Bank used</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    return '<table class="cmp"><thead><tr><th scope="col">' + t('cmp.method') + '</th>' +
+      '<th scope="col">' + t('cmp.fills') + '</th>' +
+      '<th scope="col">' + t('cmp.avg', { unit: G.PRESSURE_UNITS[pu].label }) + '</th>' +
+      '<th scope="col">' + t('cmp.air', { unit: au }) + '</th>' +
+      '<th scope="col">' + t('cmp.bank') + '</th></tr></thead><tbody>' + rows + '</tbody></table>' +
       '<p class="cmp-note">' + verdict(smart, dumb) + '</p>';
   }
 
   function verdict(smart, dumb) {
-    if (!smart.usableFills && !dumb.usableFills) {
-      return 'Neither method can bring a bottle to its target from this bank.';
-    }
+    if (!smart.usableFills && !dumb.usableFills) return t('verdict.none');
     var pu = statPressureUnit();
     var au = G.VOLUME_UNITS[airUnit()].label;
     var airGain = dumb.usableFreeAirL > 0
@@ -414,33 +424,31 @@
     var pressureGain = smart.avgFillPressureBar - dumb.avgFillPressureBar;
 
     if (smart.usableFreeAirL <= dumb.usableFreeAirL + 1e-6 && pressureGain <= 1e-9) {
-      return 'Both methods get the same out of this bank — with one donor, or donors at equal ' +
-        'pressure, there is nothing to cascade.';
+      return t('verdict.same');
     }
 
     var text;
     if (airGain !== null && airGain >= 0.5) {
-      text = 'Cascade filling gets <b>' + airGain.toFixed(0) + '% more usable air</b> out of the same bank';
+      text = t('verdict.airPct', { pct: nf(airGain, 0) });
     } else if (smart.usableFreeAirL > dumb.usableFreeAirL) {
-      text = 'Cascade filling gets <b>' + fmtAir(smart.usableFreeAirL - dumb.usableFreeAirL) + ' ' + au +
-        ' more usable air</b> out of the same bank';
+      text = t('verdict.airAbs', { air: fmtAir(smart.usableFreeAirL - dumb.usableFreeAirL), unit: au });
     } else {
-      text = 'Cascade filling gets the same air out of this bank';
+      text = t('verdict.airSame');
     }
     if (pressureGain > 0 && smart.usableFills && dumb.usableFills) {
       /* A pressure difference converts like a pressure: the units are pure
          scale factors once both sides are gauge readings. */
-      text += ', with every fill ending <b>' + fmtP(pressureGain, pu) + '</b> higher on average';
+      text += t('verdict.pressure', { delta: fmtP(pressureGain, pu) });
     }
     text += '.';
 
     if (dumb.usableFills > smart.usableFills) {
-      text += ' Sequential filling shows ' + (dumb.usableFills - smart.usableFills) +
-        ' more fills, but they are weaker ones: a bottle handed back at ' +
-        fmtP(dumb.avgFillPressureBar, pu) + ' holds less than one at ' +
-        fmtP(smart.avgFillPressureBar, pu) + '.';
+      text += tn('verdict.dumbMoreFills', dumb.usableFills - smart.usableFills, {
+        dumbAvg: fmtP(dumb.avgFillPressureBar, pu),
+        smartAvg: fmtP(smart.avgFillPressureBar, pu)
+      });
     } else if (smart.usableFills > dumb.usableFills) {
-      text += ' It also manages ' + (smart.usableFills - dumb.usableFills) + ' more fills.';
+      text += tn('verdict.smartMoreFills', smart.usableFills - dumb.usableFills);
     }
     return text;
   }
@@ -457,33 +465,36 @@
     var u = r ? r.pressureUnit : 'bar';
     var mx = r ? maxBar(r) : ev.endP;
     var tagClass = ev.status === 'full' ? 'full' : (ev.status === 'usable' ? 'usable' : 'short');
-    var tagText = ev.status === 'full' ? 'at maximum'
-      : (ev.status === 'usable' ? 'counted' : 'short of target');
+    var tagText = t(ev.status === 'full' ? 'fill.tag.full'
+      : (ev.status === 'usable' ? 'fill.tag.counted' : 'fill.tag.short'));
 
-    var steps = ev.transfers.map(function (t, i) {
-      var d = modelById(t.donorId);
+    var steps = ev.transfers.map(function (x, i) {
+      var d = modelById(x.donorId);
       return '<li class="step">' +
         '<span class="step-n">' + (i + 1) + '</span>' +
-        legHTML(d, t.donorFrom, t.donorTo, 'drop') +
+        legHTML(d, x.donorFrom, x.donorTo, 'drop') +
         '<span class="step-arrow">&rarr;</span>' +
-        legHTML(r, t.recipFrom, t.recipTo, 'gain') +
-        '<span>' + (t.unsafe ? '<span class="tag danger" title="Donor pressure exceeds this bottle’s maximum">unsafe</span> ' : '') +
-          (t.capped ? '<span class="tag">stop at max</span>' : '') + '</span>' +
+        legHTML(r, x.recipFrom, x.recipTo, 'gain') +
+        '<span>' + (x.unsafe ? '<span class="tag danger" title="' + esc(t('step.unsafe.title')) +
+            '">' + t('step.unsafe') + '</span> ' : '') +
+          (x.capped ? '<span class="tag">' + t('step.capped') + '</span>' : '') + '</span>' +
         '</li>';
     }).join('');
 
     return '<li class="fill ' + (ev.unsafe ? 'unsafe ' : '') + (ev.status === 'short' ? 'short' : '') + '">' +
       '<div class="fill-head">' +
-        '<span class="fill-no">Fill ' + ev.index + '</span>' +
+        '<span class="fill-no">' + t('fill.label', { n: ev.index }) + '</span>' +
         '<span class="fill-title">' + esc(ev.recipientName) + ' <span class="to">' +
           fmtPNum(ev.startP, u) + ' &rarr; ' + fmtP(ev.endP, u) + '</span></span>' +
-        '<span class="fill-bar" title="' + fmtP(ev.startP, u) + ' &rarr; ' + fmtP(ev.endP, u) +
-          ', target ' + fmtP(ev.target, u) + ', maximum ' + fmtP(mx, u) + '">' +
+        '<span class="fill-bar" title="' + esc(t('fill.barTitle', {
+            from: fmtP(ev.startP, u), to: fmtP(ev.endP, u),
+            target: fmtP(ev.target, u), max: fmtP(mx, u)
+          })) + '">' +
           '<i style="width:' + (100 * Math.min(1, ev.startP / mx)).toFixed(1) + '%"></i>' +
           '<b style="width:' + (100 * Math.min(1, ev.endP / mx)).toFixed(1) + '%"></b>' +
           '<u style="left:' + (100 * Math.min(1, ev.target / mx)).toFixed(1) + '%"></u></span>' +
         '<span class="tag ' + tagClass + '">' + tagText + '</span>' +
-        (ev.unsafe ? '<span class="tag danger">unsafe transfer</span>' : '') +
+        (ev.unsafe ? '<span class="tag danger">' + t('fill.tag.unsafe') + '</span>' : '') +
       '</div>' +
       '<ol class="steps">' + steps + '</ol></li>';
   }
@@ -494,18 +505,15 @@
     var smart = state.method === 'smart' ? result : G.simulate(buildConfig('smart'));
     var dumb = state.method === 'dumb' ? result : G.simulate(buildConfig('dumb'));
 
-    document.getElementById('methodHint').textContent = state.method === 'smart'
-      ? 'Cascade: two donors per fill — the lowest carries the bulk, the fullest tops up.'
-      : 'Sequential: one donor per fill, drained until it can no longer reach the target.';
+    document.getElementById('methodHint').textContent =
+      t(state.method === 'smart' ? 'method.hint.smart' : 'method.hint.dumb');
 
     var issues = validate();
     if (result.truncated) {
-      issues.unshift(['warn', 'The plan was cut off after ' + result.events.length +
-        ' fills. Raise a fill target to get a shorter, more realistic plan.']);
+      issues.unshift(['warn', t('issue.truncated', { n: result.events.length })]);
     }
     if (result.unsafeTransfers) {
-      issues.unshift(['error', result.unsafeTransfers + ' transfer(s) connect a donor above the recipient’s ' +
-        'maximum working pressure. Filling stops at the maximum, but the bottle and valve see the full donor pressure.']);
+      issues.unshift(['error', tn('issue.unsafeTransfers', result.unsafeTransfers)]);
     }
     var issueHost = document.getElementById('issues');
     issueHost.innerHTML = issues.map(function (i) {
@@ -520,14 +528,14 @@
 
     var timeline = document.getElementById('timeline');
     if (!result.events.length) {
-      timeline.innerHTML = '<li class="empty">' + (cfg.donors.length && cfg.recipients.length
-        ? 'No transfer is possible — no donor is above a recipient’s current pressure (and within its maximum).'
-        : 'Add at least one donor and one recipient bottle.') + '</li>';
+      timeline.innerHTML = '<li class="empty">' + t(cfg.donors.length && cfg.recipients.length
+        ? 'timeline.noTransfer' : 'timeline.addBottles') + '</li>';
     } else {
       var shown = result.events.slice(0, 60);
       timeline.innerHTML = shown.map(fillHTML).join('') +
         (result.events.length > shown.length
-          ? '<li class="empty">' + (result.events.length - shown.length) + ' further fills not listed.</li>' : '');
+          ? '<li class="empty">' + tn('timeline.more', result.events.length - shown.length) +
+            '</li>' : '');
     }
 
     var residual = document.getElementById('residual');
@@ -537,9 +545,9 @@
       var u = m ? m.pressureUnit : 'bar';
       return '<div class="unit"><div class="name" title="' + esc(d.name) + '">' + esc(d.name) + '</div>' +
         bottleSVG({ w: 56, h: 118, frac: d.pressureBar / scale,
-          label: d.name + ' left at ' + fmtP(d.pressureBar, u) }) +
+          label: t('bottle.ariaLeft', { name: d.name, pressure: fmtP(d.pressureBar, u) }) }) +
         '<div class="bottle-cap">' + fmtP(d.pressureBar, u) + '<br>' +
-        'was ' + fmtPNum(d.startBar, u) + '</div></div>';
+        t('residual.was', { pressure: fmtPNum(d.startBar, u) }) + '</div></div>';
     }).join('') : '<p class="empty">No donor bottles.</p>';
   }
 
@@ -591,11 +599,51 @@
     });
   });
 
+  /* ---- language ---- */
+  var langBtn = document.getElementById('langBtn');
+
+  /* Static markup carries its keys as data attributes, so the whole page can be
+     re-lettered without rebuilding it. */
+  function applyStaticText() {
+    document.title = t('meta.title');
+    var desc = document.querySelector('meta[name="description"]');
+    if (desc) desc.setAttribute('content', t('meta.description'));
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+      el.textContent = t(el.dataset.i18n);
+    });
+    document.querySelectorAll('[data-i18n-html]').forEach(function (el) {
+      el.innerHTML = t(el.dataset.i18nHtml);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(function (el) {
+      el.title = t(el.dataset.i18nTitle);
+    });
+    document.querySelectorAll('[data-i18n-aria]').forEach(function (el) {
+      el.setAttribute('aria-label', t(el.dataset.i18nAria));
+    });
+  }
+
+  function applyLanguage(next) {
+    var lang = window.I18N.setLang(next);
+    document.documentElement.lang = lang;
+    try { localStorage.setItem(LANG_KEY, lang); } catch (e) { /* private mode */ }
+    langBtn.textContent = t(lang === 'de' ? 'btn.lang.toEn' : 'btn.lang.toDe');
+    applyStaticText();
+    /* Labels that are not static markup have to be re-rendered. */
+    themeBtn.textContent = t(document.documentElement.dataset.theme === 'dark'
+      ? 'btn.theme.light' : 'btn.theme.dark');
+    renderLists();
+    refresh();
+  }
+
+  langBtn.addEventListener('click', function () {
+    applyLanguage(window.I18N.getLang() === 'de' ? 'en' : 'de');
+  });
+
   var themeBtn = document.getElementById('themeBtn');
-  function applyTheme(t) {
-    document.documentElement.dataset.theme = t;
-    themeBtn.textContent = t === 'dark' ? 'Light' : 'Dark';
-    try { localStorage.setItem('gasfill.theme', t); } catch (e) { /* ignore */ }
+  function applyTheme(next) {
+    document.documentElement.dataset.theme = next;
+    themeBtn.textContent = t(next === 'dark' ? 'btn.theme.light' : 'btn.theme.dark');
+    try { localStorage.setItem('gasfill.theme', next); } catch (e) { /* ignore */ }
   }
   themeBtn.addEventListener('click', function () {
     applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -606,8 +654,8 @@
     var url = location.origin + location.pathname + '#' + payload;
     var btn = ev.currentTarget;
     var done = function (ok) {
-      btn.textContent = ok ? 'Copied' : 'Copy failed';
-      setTimeout(function () { btn.textContent = 'Copy link'; }, 1600);
+      btn.textContent = t(ok ? 'btn.share.done' : 'btn.share.failed');
+      setTimeout(function () { btn.textContent = t('btn.share'); }, 1600);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(url).then(function () { done(true); }, function () { done(false); });
@@ -642,6 +690,10 @@
 
   unsafeChk.checked = state.allowUnsafe;
   syncMethodButtons();
-  renderLists();
-  refresh();
+
+  var savedLang = null;
+  try { savedLang = localStorage.getItem(LANG_KEY); } catch (e) { /* ignore */ }
+  var navLang = String(navigator.language || 'en').toLowerCase();
+  /* applyLanguage renders the lists and the plan, so this finishes start-up. */
+  applyLanguage(savedLang || (navLang.indexOf('de') === 0 ? 'de' : 'en'));
 })();

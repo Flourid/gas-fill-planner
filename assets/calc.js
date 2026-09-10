@@ -25,11 +25,11 @@
   var DEFAULT_TARGET_FRACTION = 0.5;
   /* Bottles a cascade fill may draw on: one for the bulk, one for the top-up. */
   var MAX_DONORS_PER_FILL = 2;
-  /* Slack on the maximum-pressure rule.  Expressing a 300 bar limit in psi and
-     rounding it to whole units gives 4351 psi, which is 299.99 bar — without
-     slack a 300 bar donor would count as unsafe purely because the recipient's
-     limit was typed in another unit.  It is well inside gauge accuracy. */
-  var MAX_PRESSURE_SLACK = 0.001;
+  /* Slack on the maximum-pressure rule: rounding when a limit is typed in
+     another unit (300 bar as whole psi comes back as 299.99 bar) plus ordinary
+     gauge tolerance.  At 1% a 300 bar bottle may be filled from a donor
+     reading up to 303 bar without being flagged. */
+  var MAX_PRESSURE_SLACK = 0.01;
   var MAX_EVENTS = 400;
 
   var VOLUME_UNITS = {

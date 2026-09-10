@@ -4,6 +4,6 @@
   "description": "Compressed air bottle transfer and cascade filling calculator — static, dependency-free",
   "private": true,
   "scripts": {
-    "test": "node test/calc.test.js"
+    "test": "node test/calc.test.js && node test/i18n.test.js"
   }
 }
