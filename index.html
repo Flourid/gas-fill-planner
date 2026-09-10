@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gas Fill Planner — compressed air bottle transfer calculator</title>
+<meta name="description" content="Plan compressed air bottle filling: cascade (smart) or sequential (dumb) transfers, fill counts and resulting pressures. Runs entirely in your browser.">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='11' y='2' width='10' height='4' rx='1.5' fill='%2338bdf8'/%3E%3Crect x='8' y='6' width='16' height='24' rx='6' fill='%2338bdf8'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="13" y="2" width="6" height="4" rx="1.2"/>
+      <rect x="8" y="6" width="16" height="24" rx="6"/>
+    </svg>
+    <div>
+      <h1>Gas Fill Planner</h1>
+      <p class="tagline">Compressed air transfer &amp; cascade calculator</p>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <button id="themeBtn" class="ghost" type="button" title="Toggle light / dark">Light</button>
+    <button id="shareBtn" class="ghost" type="button" title="Copy a link that restores this setup">Copy link</button>
+    <button id="resetBtn" class="ghost" type="button" title="Restore the example setup">Reset</button>
+  </div>
+</header>
+
+<main>
+  <section class="controls card">
+    <div class="seg" role="radiogroup" aria-label="Filling method">
+      <button type="button" class="seg-btn is-active" data-method="smart" role="radio" aria-checked="true">
+        <span class="seg-title">Smart</span>
+        <span class="seg-sub">Cascade — low pressure first, high pressure tops up</span>
+      </button>
+      <button type="button" class="seg-btn" data-method="dumb" role="radio" aria-checked="false">
+        <span class="seg-title">Dumb</span>
+        <span class="seg-sub">Sequential — empty the fullest donor first</span>
+      </button>
+    </div>
+    <label class="field threshold" title="A fill has to reach this share of the working range (minimum to maximum) to count as delivered">
+      <span>Counts as a fill from</span>
+      <div class="combo">
+        <input type="number" id="usefulPct" min="1" max="100" step="5" value="50">
+        <select disabled aria-hidden="true"><option>% of range</option></select>
+      </div>
+    </label>
+    <label class="switch" title="Allow donors above the recipient's maximum working pressure">
+      <input type="checkbox" id="unsafeChk">
+      <span class="switch-track"><span class="switch-knob"></span></span>
+      <span class="switch-label">Allow unsafe filling</span>
+    </label>
+  </section>
+
+  <div class="columns">
+    <section class="card" id="donorCard">
+      <div class="card-head">
+        <h2>Donor bottles</h2>
+        <button type="button" class="add" data-add="donor">+ Add donor</button>
+      </div>
+      <div class="bottle-list" id="donorList"></div>
+    </section>
+
+    <section class="card" id="recipCard">
+      <div class="card-head">
+        <h2>Recipient bottles</h2>
+        <button type="button" class="add" data-add="recipient">+ Add recipient</button>
+      </div>
+      <div class="bottle-list" id="recipList"></div>
+    </section>
+  </div>
+
+  <section class="card" id="planCard">
+    <div class="card-head">
+      <h2>Fill plan</h2>
+      <span class="hint" id="methodHint"></span>
+    </div>
+    <div id="issues" class="issues" hidden></div>
+    <div class="stats" id="stats"></div>
+    <div id="compare" class="compare"></div>
+    <ol class="timeline" id="timeline"></ol>
+    <div class="residual">
+      <h3>Donor bank when the plan ends</h3>
+      <div class="bottle-strip" id="residual"></div>
+    </div>
+  </section>
+
+  <section class="card notes">
+    <h2>How the numbers are produced</h2>
+    <ul>
+      <li><strong>Model.</strong> Air is treated as an ideal gas at constant temperature (Boyle's law): bottle content is proportional to volume &times; absolute pressure. Connecting a donor to a recipient equalises both to the volume-weighted mean pressure <code>P = (V<sub>d</sub>P<sub>d</sub> + V<sub>r</sub>P<sub>r</sub>) / (V<sub>d</sub> + V<sub>r</sub>)</code>. The gauge/absolute offset cancels in that expression, so all pressures you enter and read are gauge pressures.</li>
+      <li><strong>Real fills run warm.</strong> Gas heats on compression and cools in the donor, so a bottle settled back to ambient temperature reads a little lower than shown here. Treat the results as the isothermal best case.</li>
+      <li><strong>Smart vs. dumb.</strong> Smart connects the lowest-pressure usable donor first and keeps the highest-pressure bottle in reserve for the final top-up, which extracts far more usable gas from the same bank. Dumb equalises the fullest donor first and works down.</li>
+      <li><strong>Duty cycle.</strong> A fill that reaches the <em>counts as a fill</em> threshold — by default half of the bottle's working range between minimum and maximum — is counted; the bottle then goes into service, comes back at its minimum pressure and queues for a refill. The first fill that falls short of the threshold is still shown, with its resulting pressure, but ends that bottle's campaign because every later attempt would deliver less. Raise the threshold if only near-full bottles are useful to you, lower it to squeeze the bank dry.</li>
+      <li><strong>Safety limit.</strong> A donor above a recipient's maximum working pressure is never connected unless <em>Allow unsafe filling</em> is on; those transfers are then flagged. Transfers always stop at the recipient's maximum, the surplus stays in the donor.</li>
+    </ul>
+    <p class="disclaimer">Planning aid only. Verify every pressure against the bottle and valve markings and the rules that apply to you before filling anything.</p>
+  </section>
+</main>
+
+<footer>
+  <span>Everything is computed locally in your browser — no data leaves this page.</span>
+</footer>
+
+<script src="assets/calc.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

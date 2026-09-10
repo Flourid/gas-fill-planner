@@ -1,0 +1,9 @@
+{
+  "name": "gas-fill-planner",
+  "version": "1.0.0",
+  "description": "Compressed air bottle transfer and cascade filling calculator — static, dependency-free",
+  "private": true,
+  "scripts": {
+    "test": "node test/calc.test.js"
+  }
+}

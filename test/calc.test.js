@@ -1,0 +1,138 @@
+/* Run with: node test/calc.test.js */
+var assert = require('assert');
+var G = require('../assets/calc.js');
+
+var pass = 0;
+function test(name, fn) {
+  try { fn(); pass++; console.log('  ok  ' + name); }
+  catch (e) { console.error('  FAIL ' + name + '\n       ' + e.message); process.exitCode = 1; }
+}
+function near(a, b, tol) { assert.ok(Math.abs(a - b) < (tol || 1e-6), a + ' !~ ' + b); }
+
+console.log('unit conversion');
+test('volume units round-trip', function () {
+  near(G.toLitre(1, 'in3'), 0.016387064);
+  near(G.toLitre(1000, 'cm3'), 1);
+  near(G.fromLitre(G.toLitre(13.5, 'ft3'), 'ft3'), 13.5);
+});
+test('pressure units', function () {
+  near(G.toBar(3000, 'psi'), 206.842718, 1e-4);
+  near(G.toBar(30, 'MPa'), 300);
+  near(G.fromBar(G.toBar(232, 'psi'), 'psi'), 232, 1e-9);
+});
+
+console.log('equalisation');
+test('volume-weighted mean', function () {
+  var r = G.equalise(50, 300, 12, 50, 300);
+  near(r.recipP, 15600 / 62, 1e-9);
+  assert.strictEqual(r.capped, false);
+});
+test('content is conserved', function () {
+  var before = G.content(50, 300) + G.content(12, 50);
+  var r = G.equalise(50, 300, 12, 50, 300);
+  near(G.content(50, r.donorP) + G.content(12, r.recipP), before, 1e-6);
+});
+test('cap stops the recipient at its maximum and leaves the rest in the donor', function () {
+  var r = G.equalise(50, 300, 12, 50, 200);
+  near(r.recipP, 200);
+  near(r.donorP, (50 * 300 + 12 * 50 - 12 * 200) / 50);
+  assert.strictEqual(r.capped, true);
+  var before = G.content(50, 300) + G.content(12, 50);
+  near(G.content(50, r.donorP) + G.content(12, r.recipP), before, 1e-6);
+});
+
+console.log('campaign');
+var bank = [
+  { id: 'd1', name: 'A', volumeL: 50, pressureBar: 232 },
+  { id: 'd2', name: 'B', volumeL: 50, pressureBar: 150 },
+  { id: 'd3', name: 'C', volumeL: 50, pressureBar: 90 }
+];
+var tank = [{ id: 'r1', name: 'T', volumeL: 12, pressureBar: 50, maxBar: 232, minBar: 50 }];
+function fresh(x) { return JSON.parse(JSON.stringify(x)); }
+
+test('smart cascade yields at least as many fills as sequential', function () {
+  var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var dumb = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'dumb' });
+  assert.ok(smart.usableFills >= dumb.usableFills,
+    'smart ' + smart.usableFills + ' < dumb ' + dumb.usableFills);
+  /* And every counted fill sits at a higher pressure than the sequential one. */
+  var n = Math.min(smart.events.length, dumb.events.length);
+  for (var i = 0; i < n; i++) {
+    assert.ok(smart.events[i].endP >= dumb.events[i].endP - 1e-9,
+      'fill ' + (i + 1) + ': smart ' + smart.events[i].endP + ' < dumb ' + dumb.events[i].endP);
+  }
+  console.log('       smart=' + smart.usableFills + ' fills, dumb=' + dumb.usableFills + ' fills');
+});
+test('smart starts with the lowest usable donor, dumb with the fullest', function () {
+  var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var dumb = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'dumb' });
+  assert.strictEqual(smart.events[0].transfers[0].donorId, 'd3');
+  assert.strictEqual(dumb.events[0].transfers[0].donorId, 'd1');
+});
+test('every transfer conserves gas and never exceeds the maximum', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  res.events.forEach(function (ev) {
+    ev.transfers.forEach(function (t) {
+      assert.ok(t.recipTo <= 232 + 1e-9, 'over maximum: ' + t.recipTo);
+      assert.ok(t.recipTo > t.recipFrom && t.donorTo <= t.donorFrom + 1e-9);
+      near(G.content(50, t.donorFrom) + G.content(12, t.recipFrom),
+           G.content(50, t.donorTo) + G.content(12, t.recipTo), 1e-6);
+    });
+  });
+});
+test('a donor above the maximum is held back unless unsafe filling is allowed', function () {
+  var hot = [{ id: 'h', name: 'Hot', volumeL: 50, pressureBar: 300 }];
+  var low = [{ id: 'r', name: 'Low', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 }];
+  var safe = G.simulate({ donors: fresh(hot), recipients: fresh(low), method: 'smart' });
+  assert.strictEqual(safe.events.length, 0);
+  var unsafe = G.simulate({ donors: fresh(hot), recipients: fresh(low), method: 'smart', allowUnsafe: true });
+  assert.ok(unsafe.usableFills > 0);
+  assert.ok(unsafe.unsafeTransfers > 0);
+  unsafe.events.forEach(function (e) {
+    e.transfers.forEach(function (t) { assert.ok(t.recipTo <= 200 + 1e-9); });
+  });
+});
+test('recipients are cycled and each fill returns them to the minimum', function () {
+  var two = [
+    { id: 'a', name: 'A', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 },
+    { id: 'b', name: 'B', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 }
+  ];
+  var res = G.simulate({ donors: fresh(bank), recipients: two, method: 'smart' });
+  assert.strictEqual(res.events[0].recipientId, 'a');
+  assert.strictEqual(res.events[1].recipientId, 'b');
+  res.events.slice(2).forEach(function (e) { near(e.startP, 50, 1e-6); });
+});
+test('the campaign ends with a short fill and stays bounded', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var last = res.events[res.events.length - 1];
+  assert.strictEqual(last.status, 'short');
+  assert.strictEqual(res.shortFills, 1);
+  assert.ok(res.events.length < 20 && !res.truncated);
+  /* Counted fills deliver monotonically less as the bank depletes. */
+  var counted = res.events.filter(function (e) { return e.status !== 'short'; });
+  for (var i = 1; i < counted.length; i++) {
+    assert.ok(counted[i].endP <= counted[i - 1].endP + 1e-9, 'fill pressures should not rise');
+  }
+});
+test('a stricter useful threshold yields fewer counted fills', function () {
+  var loose = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart',
+    usefulFraction: 0.25 });
+  var strict = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart',
+    usefulFraction: 0.9 });
+  assert.ok(loose.usableFills > strict.usableFills,
+    'loose ' + loose.usableFills + ' should exceed strict ' + strict.usableFills);
+  loose.events.filter(function (e) { return e.status !== 'short'; }).forEach(function (e) {
+    assert.ok(e.endP >= 50 + 0.25 * (232 - 50) - 1e-9);
+  });
+});
+test('an empty bank produces no plan instead of looping', function () {
+  var res = G.simulate({ donors: [], recipients: fresh(tank), method: 'smart' });
+  assert.strictEqual(res.events.length, 0);
+  assert.strictEqual(res.truncated, false);
+});
+test('free air uses absolute pressure', function () {
+  near(G.freeAirLitres(10, 0), 10, 1e-9);
+  near(G.freeAirLitres(10, G.ATM_BAR), 20, 1e-9);
+});
+
+console.log('\n' + pass + ' checks passed' + (process.exitCode ? ' (with failures)' : ''));
