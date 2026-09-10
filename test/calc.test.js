@@ -50,6 +50,9 @@ var bank = [
 var tank = [{ id: 'r1', name: 'T', volumeL: 12, pressureBar: 50, maxBar: 232, minBar: 50,
               targetBar: 141 }];
 function fresh(x) { return JSON.parse(JSON.stringify(x)); }
+function withTarget(t) {
+  var r = fresh(tank); r[0].targetBar = t; return r;
+}
 
 test('smart cascade yields at least as many fills as sequential', function () {
   var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
@@ -64,6 +67,44 @@ test('smart cascade yields at least as many fills as sequential', function () {
   }
   console.log('       smart=' + smart.usableFills + ' fills, dumb=' + dumb.usableFills + ' fills');
 });
+test('smart draws on several donors per fill, dumb on exactly one', function () {
+  var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var dumb = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'dumb' });
+  assert.ok(smart.events.some(function (e) { return e.transfers.length > 1; }),
+    'the cascade should combine donors');
+  dumb.events.forEach(function (e) {
+    assert.strictEqual(e.transfers.length, 1, 'sequential filling must use one donor per fill');
+  });
+});
+test('dumb stays on one donor until it falls short, then swaps to the next', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: withTarget(100), method: 'dumb' });
+  var counted = res.events.filter(function (e) { return e.status !== 'short'; });
+  assert.ok(counted.length > 3, 'need a few fills to see the hand-over');
+
+  /* Compress the donor sequence into runs; a donor set aside must not come back. */
+  var runs = [];
+  counted.forEach(function (e) {
+    var id = e.transfers[0].donorId;
+    if (runs[runs.length - 1] !== id) runs.push(id);
+  });
+  assert.ok(runs.length > 1, 'expected a hand-over to a second donor, got ' + JSON.stringify(runs));
+  assert.strictEqual(runs.length, new Set(runs).size,
+    'a donor was picked up again after being set aside: ' + JSON.stringify(runs));
+
+  /* Every counted fill from a donor still on the station reached the target. */
+  counted.forEach(function (e) { assert.ok(e.endP >= 100 - 1e-9); });
+});
+test('dumb sets a donor aside with gas still in it', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: withTarget(180), method: 'dumb' });
+  var used = {};
+  res.events.forEach(function (e) { used[e.transfers[0].donorId] = true; });
+  var untouched = res.donors.filter(function (d) { return !used[d.id]; });
+  assert.ok(untouched.length > 0, 'a target no single donor can reach should leave donors unused');
+  untouched.forEach(function (d) { near(d.pressureBar, d.startBar); });
+  /* And the drained one keeps the gas it could not deliver on its own. */
+  var drained = res.donors.filter(function (d) { return used[d.id]; })[0];
+  assert.ok(drained.pressureBar > 100, 'set-aside donor should retain gas: ' + drained.pressureBar);
+});
 test('smart starts with the lowest usable donor, dumb with the fullest', function () {
   var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
   var dumb = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'dumb' });
@@ -71,13 +112,15 @@ test('smart starts with the lowest usable donor, dumb with the fullest', functio
   assert.strictEqual(dumb.events[0].transfers[0].donorId, 'd1');
 });
 test('every transfer conserves gas and never exceeds the maximum', function () {
-  var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
-  res.events.forEach(function (ev) {
-    ev.transfers.forEach(function (t) {
-      assert.ok(t.recipTo <= 232 + 1e-9, 'over maximum: ' + t.recipTo);
-      assert.ok(t.recipTo > t.recipFrom && t.donorTo <= t.donorFrom + 1e-9);
-      near(G.content(50, t.donorFrom) + G.content(12, t.recipFrom),
-           G.content(50, t.donorTo) + G.content(12, t.recipTo), 1e-6);
+  ['smart', 'dumb'].forEach(function (method) {
+    var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: method });
+    res.events.forEach(function (ev) {
+      ev.transfers.forEach(function (t) {
+        assert.ok(t.recipTo <= 232 + 1e-9, method + ' went over maximum: ' + t.recipTo);
+        assert.ok(t.recipTo > t.recipFrom && t.donorTo <= t.donorFrom + 1e-9);
+        near(G.content(50, t.donorFrom) + G.content(12, t.recipFrom),
+             G.content(50, t.donorTo) + G.content(12, t.recipTo), 1e-6);
+      });
     });
   });
 });
@@ -116,9 +159,6 @@ test('the campaign ends short of the target and stays bounded', function () {
     assert.ok(counted[i].endP <= counted[i - 1].endP + 1e-9, 'fill pressures should not rise');
   }
 });
-function withTarget(t) {
-  var r = fresh(tank); r[0].targetBar = t; return r;
-}
 test('a higher fill target yields fewer counted fills', function () {
   var loose = G.simulate({ donors: fresh(bank), recipients: withTarget(95), method: 'smart' });
   var strict = G.simulate({ donors: fresh(bank), recipients: withTarget(190), method: 'smart' });

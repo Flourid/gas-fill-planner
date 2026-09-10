@@ -27,7 +27,7 @@
       ],
       recipients: [
         { id: 'r1', name: 'Tank 1', volume: 12, volumeUnit: 'L', pressure: 40, pressureUnit: 'bar',
-          max: 232, min: 50, target: 180 }
+          max: 232, min: 50, target: 150 }
       ]
     };
   }
@@ -353,7 +353,7 @@
     var tiles = [
       ['accent', result.usableFills, result.usableFills === 1 ? 'Fill delivered' : 'Fills delivered'],
       ['', result.transferCount, 'Transfers'],
-      ['small', span, 'Fill pressure, first to last'],
+      ['small', span, 'Fill pressure, high to low'],
       ['', Math.round(result.deliveredFreeAirL).toLocaleString(), 'Free air delivered (L)'],
       ['', Math.round(result.bankUsedFraction * 100) + '%', 'Donor bank used']
     ];
@@ -417,8 +417,8 @@
     var other = G.simulate(buildConfig(state.method === 'smart' ? 'dumb' : 'smart'));
 
     document.getElementById('methodHint').textContent = state.method === 'smart'
-      ? 'Cascade: lowest usable donor first, highest pressure kept for the top-up.'
-      : 'Sequential: fullest donor first, equalised until spent.';
+      ? 'Cascade: as many donors per fill as it takes, lowest usable pressure first.'
+      : 'Sequential: one donor per fill, drained until it can no longer reach the target.';
 
     var issues = validate();
     if (result.truncated) {

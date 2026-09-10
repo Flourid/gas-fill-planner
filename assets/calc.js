@@ -72,60 +72,127 @@
     return { donorP: pEq, recipP: pEq, capped: false };
   }
 
-  /**
-   * Pick the next donor to connect.
-   *  - "smart": lowest usable pressure first, so high-pressure gas is saved
-   *    for the final top-up (cascade filling).
-   *  - "dumb":  highest pressure first, each donor equalised until spent.
-   */
-  function pickDonor(donors, recip, method, allowUnsafe) {
-    var best = null;
-    for (var i = 0; i < donors.length; i++) {
-      var d = donors[i];
-      if (d.volumeL <= 0) continue;
-      if (d.pressureBar <= recip.pressureBar + MIN_USEFUL_GAIN_BAR) continue;
-      var unsafe = d.pressureBar > recip.maxBar + EPS;
-      if (unsafe && !allowUnsafe) continue;
-      if (best === null) { best = d; continue; }
-      best = (method === 'dumb')
-        ? (d.pressureBar > best.pressureBar ? d : best)
-        : (d.pressureBar < best.pressureBar ? d : best);
-    }
-    return best;
+  /* Can this donor push gas into this recipient at all? */
+  function donorUsable(donor, recip, allowUnsafe) {
+    if (donor.volumeL <= 0) return false;
+    if (donor.pressureBar <= recip.pressureBar + MIN_USEFUL_GAIN_BAR) return false;
+    if (donor.pressureBar > recip.maxBar + EPS && !allowUnsafe) return false;
+    return true;
   }
 
-  /* Fill one recipient as far as the donor bank allows. */
-  function fillOnce(donors, recip, method, allowUnsafe) {
+  /* Pressure the recipient would settle at if this donor were connected now. */
+  function predict(donor, recip) {
+    return equalise(donor.volumeL, donor.pressureBar, recip.volumeL,
+                    recip.pressureBar, recip.maxBar).recipP;
+  }
+
+  /* Connect a donor, move the gas, and record what happened. */
+  function applyTransfer(donor, recip) {
+    var donorFrom = donor.pressureBar;
+    var recipFrom = recip.pressureBar;
+    var r = equalise(donor.volumeL, donorFrom, recip.volumeL, recipFrom, recip.maxBar);
+
+    donor.pressureBar = r.donorP;
+    recip.pressureBar = r.recipP;
+
+    return {
+      donorId: donor.id,
+      donorName: donor.name,
+      donorFrom: donorFrom,
+      donorTo: r.donorP,
+      recipFrom: recipFrom,
+      recipTo: r.recipP,
+      deliveredFreeAirL: freeAirLitres(recip.volumeL, r.recipP) - freeAirLitres(recip.volumeL, recipFrom),
+      capped: r.capped,
+      unsafe: donorFrom > recip.maxBar + EPS
+    };
+  }
+
+  /**
+   * Cascade filling: connect the lowest usable donor first and keep going up
+   * the bank, so the high-pressure bottle is only needed for the final top-up.
+   * One fill may draw on several donors.
+   */
+  function fillCascade(donors, recip, allowUnsafe) {
     var startP = recip.pressureBar;
     var transfers = [];
     var guard = 0;
 
     while (recip.pressureBar < recip.maxBar - MIN_USEFUL_GAIN_BAR && guard++ < 200) {
-      var donor = pickDonor(donors, recip, method, allowUnsafe);
+      var donor = null;
+      for (var i = 0; i < donors.length; i++) {
+        var d = donors[i];
+        if (!donorUsable(d, recip, allowUnsafe)) continue;
+        if (donor === null || d.pressureBar < donor.pressureBar) donor = d;
+      }
       if (!donor) break;
-
-      var donorFrom = donor.pressureBar;
-      var recipFrom = recip.pressureBar;
-      var r = equalise(donor.volumeL, donorFrom, recip.volumeL, recipFrom, recip.maxBar);
-      if (r.recipP - recipFrom < MIN_USEFUL_GAIN_BAR) break;
-
-      donor.pressureBar = r.donorP;
-      recip.pressureBar = r.recipP;
-
-      transfers.push({
-        donorId: donor.id,
-        donorName: donor.name,
-        donorFrom: donorFrom,
-        donorTo: r.donorP,
-        recipFrom: recipFrom,
-        recipTo: r.recipP,
-        deliveredFreeAirL: freeAirLitres(recip.volumeL, r.recipP) - freeAirLitres(recip.volumeL, recipFrom),
-        capped: r.capped,
-        unsafe: donorFrom > recip.maxBar + EPS
-      });
+      if (predict(donor, recip) - recip.pressureBar < MIN_USEFUL_GAIN_BAR) break;
+      transfers.push(applyTransfer(donor, recip));
     }
 
     return { startP: startP, endP: recip.pressureBar, transfers: transfers };
+  }
+
+  /* Would this donor, on its own, bring the recipient to its target? */
+  function reachesTarget(donor, recip, allowUnsafe) {
+    if (!donorUsable(donor, recip, allowUnsafe)) return false;
+    return predict(donor, recip) >= recip.targetBar - EPS;
+  }
+
+  /**
+   * Sequential filling: one donor per fill, never combined.  A single bottle
+   * stays on the station and is drained fill after fill for as long as it can
+   * still reach the target on its own.  When it cannot, it is set aside with
+   * whatever is left in it and the fullest bottle that can reach the target
+   * takes over.
+   *
+   * When no donor can reach the target alone, the bottle that gets closest is
+   * connected anyway, so the plan ends by showing how far the bank still got.
+   *
+   * ctx.activeDonorId is the bottle currently on the station; it is shared
+   * across recipients, as one filling station would be.
+   */
+  function fillSequential(donors, recip, allowUnsafe, ctx) {
+    var startP = recip.pressureBar;
+    var donor = null;
+
+    /* Keep using the bottle already on the station while it still delivers. */
+    for (var i = 0; i < donors.length; i++) {
+      if (donors[i].id === ctx.activeDonorId && reachesTarget(donors[i], recip, allowUnsafe)) {
+        donor = donors[i];
+        break;
+      }
+    }
+
+    if (!donor) {
+      /* Swap in the fullest bottle that reaches the target by itself. */
+      for (var j = 0; j < donors.length; j++) {
+        var d = donors[j];
+        if (!reachesTarget(d, recip, allowUnsafe)) continue;
+        if (donor === null || d.pressureBar > donor.pressureBar) donor = d;
+      }
+      /* Nothing reaches the target: connect whatever gets closest, once. */
+      if (!donor) {
+        var bestP = -Infinity;
+        for (var k = 0; k < donors.length; k++) {
+          var c = donors[k];
+          if (!donorUsable(c, recip, allowUnsafe)) continue;
+          var p = predict(c, recip);
+          if (p - recip.pressureBar < MIN_USEFUL_GAIN_BAR) continue;
+          if (p > bestP) { donor = c; bestP = p; }
+        }
+      }
+      if (donor) ctx.activeDonorId = donor.id;
+    }
+
+    var transfers = donor ? [applyTransfer(donor, recip)] : [];
+    return { startP: startP, endP: recip.pressureBar, transfers: transfers };
+  }
+
+  function fillOnce(donors, recip, method, allowUnsafe, ctx) {
+    return method === 'dumb'
+      ? fillSequential(donors, recip, allowUnsafe, ctx)
+      : fillCascade(donors, recip, allowUnsafe);
   }
 
   /**
@@ -149,7 +216,7 @@
    * config = {
    *   donors:     [{ id, name, volumeL, pressureBar }],
    *   recipients: [{ id, name, volumeL, pressureBar, maxBar, minBar, targetBar }],
-   *   method:     'smart' | 'dumb',
+   *   method:     'smart' (cascade) | 'dumb' (sequential, one donor per fill),
    *   allowUnsafe: boolean
    * }
    *
@@ -179,6 +246,8 @@
     var method = config.method === 'dumb' ? 'dumb' : 'smart';
     var allowUnsafe = !!config.allowUnsafe;
     var events = [];
+    /* The bottle currently on the filling station, for sequential filling. */
+    var ctx = { activeDonorId: null };
     var bankStart = donors.reduce(function (s, d) { return s + content(d.volumeL, d.startBar); }, 0);
 
     var anyActive = true;
@@ -188,7 +257,7 @@
         var r = recips[i];
         if (!r.active) continue;
 
-        var res = fillOnce(donors, r, method, allowUnsafe);
+        var res = fillOnce(donors, r, method, allowUnsafe, ctx);
         if (res.transfers.length === 0) { r.active = false; continue; }
 
         var target = r.targetBar;

@@ -26,14 +26,20 @@ Treat the output as the isothermal best case.
 
 **Strategies.**
 
-| Method | Donor order | Effect |
-| --- | --- | --- |
-| Smart | Lowest usable pressure first | Cascade filling. The bulk of the gas comes from bottles that would otherwise be unusable, and the highest-pressure bottle is kept in reserve for the final top-up. |
-| Dumb | Highest pressure first | Sequential filling. Each donor is equalised until spent, starting with the fullest, which throws away the pressure differential that does the useful work. |
+**Smart (cascade).** One fill draws on as many donors as it takes, starting with the lowest usable
+pressure and working up, so the bulk of the gas comes from bottles that would otherwise be unusable and
+the highest-pressure bottle is only needed for the final top-up.
+
+**Dumb (sequential).** Donors are never combined. One bottle stays on the station and is drained fill
+after fill for as long as it alone can bring the recipient to its target. When it can no longer manage
+that it is set aside — with whatever is left still in it — and the fullest bottle that can reach the
+target takes over. The plan closes with one best-effort transfer from whichever bottle gets closest,
+so the end pressure is visible even when nothing reaches the target any more.
 
 With the default example — three 50 L donors at 232 / 180 / 120 bar filling a 12 L tank that works
-between 50 and 232 bar and counts as filled at 180 bar — the cascade delivers 4 fills against 1 for the
-sequential method, from exactly the same bank.
+between 50 and 232 bar and counts as filled at 150 bar — the cascade delivers 6 fills against 3 for the
+sequential method, from the same bank. The sequential run also ends with 155 bar left in one donor and
+the third never touched, which is exactly the gas the cascade turns into fills.
 
 **Fill counting.** A transfer stops at the recipient's maximum working pressure; the surplus stays in
 the donor. Every recipient carries its own **fill target** — the pressure, in that bottle's own unit,

@@ -37,7 +37,7 @@
       </button>
       <button type="button" class="seg-btn" data-method="dumb" role="radio" aria-checked="false">
         <span class="seg-title">Dumb</span>
-        <span class="seg-sub">Sequential — empty the fullest donor first</span>
+        <span class="seg-sub">Sequential — one donor at a time until it falls short</span>
       </button>
     </div>
     <label class="switch" title="Allow donors above the recipient's maximum working pressure">
@@ -85,7 +85,7 @@
     <ul>
       <li><strong>Model.</strong> Air is treated as an ideal gas at constant temperature (Boyle's law): bottle content is proportional to volume &times; absolute pressure. Connecting a donor to a recipient equalises both to the volume-weighted mean pressure <code>P = (V<sub>d</sub>P<sub>d</sub> + V<sub>r</sub>P<sub>r</sub>) / (V<sub>d</sub> + V<sub>r</sub>)</code>. The gauge/absolute offset cancels in that expression, so all pressures you enter and read are gauge pressures.</li>
       <li><strong>Real fills run warm.</strong> Gas heats on compression and cools in the donor, so a bottle settled back to ambient temperature reads a little lower than shown here. Treat the results as the isothermal best case.</li>
-      <li><strong>Smart vs. dumb.</strong> Smart connects the lowest-pressure usable donor first and keeps the highest-pressure bottle in reserve for the final top-up, which extracts far more usable gas from the same bank. Dumb equalises the fullest donor first and works down.</li>
+      <li><strong>Smart vs. dumb.</strong> Smart draws on as many donors as it takes for one fill, starting with the lowest usable pressure and keeping the highest-pressure bottle in reserve for the final top-up — which extracts far more usable gas from the same bank. Dumb never combines donors: one bottle stays on the station and is drained fill after fill for as long as it alone can reach the target, then it is set aside, with whatever is left still in it, and the fullest bottle that can reach the target takes over.</li>
       <li><strong>Duty cycle.</strong> Every recipient carries its own <em>fill target</em>: the pressure a fill has to reach to count. Once a fill reaches it the bottle goes into service, comes back at its minimum pressure and queues for a refill. The first fill that falls short of the target is still shown, with its resulting pressure, but ends that bottle's campaign because every later attempt would deliver less. Raise a target if only near-full bottles are useful to you, lower it to squeeze the bank dry. A target must sit above the minimum — otherwise a bottle would count as filled the moment it is topped up at all — and is capped at the maximum.</li>
       <li><strong>Safety limit.</strong> A donor above a recipient's maximum working pressure is never connected unless <em>Allow unsafe filling</em> is on; those transfers are then flagged. Transfers always stop at the recipient's maximum, the surplus stays in the donor.</li>
     </ul>
