@@ -149,6 +149,7 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .bottle .level.dangerlevel { fill: var(--danger); }
 .bottle .tick { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 2; }
 .bottle .tick.max { stroke: var(--danger); }
+.bottle .tick.target { stroke: var(--accent); stroke-dasharray: 3 2; }
 .bottle-cap { text-align: center; font-size: .66rem; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
 
 .bottle-strip { display: flex; flex-wrap: wrap; gap: 14px; }
@@ -233,10 +234,5 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px; color: var(--muted)
   .seg-btn { flex: 1 1 140px; }
 }
 
-/* useful-fill threshold control */
-.threshold { gap: 4px; }
-.threshold > span { font-size: .72rem; text-transform: none; letter-spacing: 0; }
-.threshold .combo input { width: 62px; text-align: right; }
-.threshold .combo select { pointer-events: none; opacity: .8; }
 .fill-bar u { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1px dashed var(--muted); text-decoration: none; }
 .stat.small .stat-v { font-size: .95rem; padding: .25rem 0; }

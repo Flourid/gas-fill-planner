@@ -47,7 +47,8 @@ var bank = [
   { id: 'd2', name: 'B', volumeL: 50, pressureBar: 150 },
   { id: 'd3', name: 'C', volumeL: 50, pressureBar: 90 }
 ];
-var tank = [{ id: 'r1', name: 'T', volumeL: 12, pressureBar: 50, maxBar: 232, minBar: 50 }];
+var tank = [{ id: 'r1', name: 'T', volumeL: 12, pressureBar: 50, maxBar: 232, minBar: 50,
+              targetBar: 141 }];
 function fresh(x) { return JSON.parse(JSON.stringify(x)); }
 
 test('smart cascade yields at least as many fills as sequential', function () {
@@ -82,7 +83,8 @@ test('every transfer conserves gas and never exceeds the maximum', function () {
 });
 test('a donor above the maximum is held back unless unsafe filling is allowed', function () {
   var hot = [{ id: 'h', name: 'Hot', volumeL: 50, pressureBar: 300 }];
-  var low = [{ id: 'r', name: 'Low', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 }];
+  var low = [{ id: 'r', name: 'Low', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50,
+               targetBar: 150 }];
   var safe = G.simulate({ donors: fresh(hot), recipients: fresh(low), method: 'smart' });
   assert.strictEqual(safe.events.length, 0);
   var unsafe = G.simulate({ donors: fresh(hot), recipients: fresh(low), method: 'smart', allowUnsafe: true });
@@ -94,15 +96,15 @@ test('a donor above the maximum is held back unless unsafe filling is allowed', 
 });
 test('recipients are cycled and each fill returns them to the minimum', function () {
   var two = [
-    { id: 'a', name: 'A', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 },
-    { id: 'b', name: 'B', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50 }
+    { id: 'a', name: 'A', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50, targetBar: 125 },
+    { id: 'b', name: 'B', volumeL: 10, pressureBar: 50, maxBar: 200, minBar: 50, targetBar: 125 }
   ];
   var res = G.simulate({ donors: fresh(bank), recipients: two, method: 'smart' });
   assert.strictEqual(res.events[0].recipientId, 'a');
   assert.strictEqual(res.events[1].recipientId, 'b');
   res.events.slice(2).forEach(function (e) { near(e.startP, 50, 1e-6); });
 });
-test('the campaign ends with a short fill and stays bounded', function () {
+test('the campaign ends short of the target and stays bounded', function () {
   var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
   var last = res.events[res.events.length - 1];
   assert.strictEqual(last.status, 'short');
@@ -114,16 +116,55 @@ test('the campaign ends with a short fill and stays bounded', function () {
     assert.ok(counted[i].endP <= counted[i - 1].endP + 1e-9, 'fill pressures should not rise');
   }
 });
-test('a stricter useful threshold yields fewer counted fills', function () {
-  var loose = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart',
-    usefulFraction: 0.25 });
-  var strict = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart',
-    usefulFraction: 0.9 });
+function withTarget(t) {
+  var r = fresh(tank); r[0].targetBar = t; return r;
+}
+test('a higher fill target yields fewer counted fills', function () {
+  var loose = G.simulate({ donors: fresh(bank), recipients: withTarget(95), method: 'smart' });
+  var strict = G.simulate({ donors: fresh(bank), recipients: withTarget(190), method: 'smart' });
   assert.ok(loose.usableFills > strict.usableFills,
-    'loose ' + loose.usableFills + ' should exceed strict ' + strict.usableFills);
+    'target 95 gave ' + loose.usableFills + ', target 190 gave ' + strict.usableFills);
   loose.events.filter(function (e) { return e.status !== 'short'; }).forEach(function (e) {
-    assert.ok(e.endP >= 50 + 0.25 * (232 - 50) - 1e-9);
+    assert.ok(e.endP >= 95 - 1e-9, 'counted fill below its target: ' + e.endP);
   });
+});
+test('each recipient uses its own target', function () {
+  var two = [
+    { id: 'a', name: 'A', volumeL: 8, pressureBar: 50, maxBar: 200, minBar: 50, targetBar: 80 },
+    { id: 'b', name: 'B', volumeL: 8, pressureBar: 50, maxBar: 200, minBar: 50, targetBar: 170 }
+  ];
+  var res = G.simulate({ donors: fresh(bank), recipients: two, method: 'smart' });
+  var byId = {};
+  res.recipients.forEach(function (r) { byId[r.id] = r; });
+  near(byId.a.targetBar, 80);
+  near(byId.b.targetBar, 170);
+  /* The lenient bottle keeps being refilled long after the strict one stops. */
+  assert.ok(byId.a.fills > byId.b.fills, 'A ' + byId.a.fills + ' should beat B ' + byId.b.fills);
+  res.events.filter(function (e) { return e.status !== 'short'; }).forEach(function (e) {
+    assert.ok(e.endP >= byId[e.recipientId].targetBar - 1e-9);
+  });
+});
+test('a missing target falls back to the middle of the working range', function () {
+  var r = fresh(tank); delete r[0].targetBar;
+  var res = G.simulate({ donors: fresh(bank), recipients: r, method: 'smart' });
+  near(res.recipients[0].targetBar, 141);
+});
+test('a target at or below the minimum is lifted above it so the plan terminates', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: withTarget(20), method: 'smart' });
+  assert.ok(res.recipients[0].targetBar > 50, 'target should be lifted above the minimum');
+  assert.ok(res.events.length > 0 && !res.truncated, 'plan should still be finite');
+});
+test('a target above the maximum is capped at the maximum', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: withTarget(400), method: 'smart' });
+  near(res.recipients[0].targetBar, 232);
+});
+test('reaching the maximum counts even when the target is the maximum itself', function () {
+  /* Equalising only approaches the maximum asymptotically, so a huge donor is
+     used here to land within the tolerance. */
+  var big = [{ id: 'big', name: 'Big', volumeL: 5000, pressureBar: 232 }];
+  var res = G.simulate({ donors: big, recipients: withTarget(232), method: 'smart' });
+  assert.ok(res.usableFills > 0, 'a bottle filled to its maximum should count');
+  assert.strictEqual(res.events[0].status, 'full');
 });
 test('an empty bank produces no plan instead of looping', function () {
   var res = G.simulate({ donors: [], recipients: fresh(tank), method: 'smart' });

@@ -21,8 +21,8 @@
   var EPS = 1e-9;
   /* A transfer must move at least this much pressure to be worth listing. */
   var MIN_USEFUL_GAIN_BAR = 0.05;
-  /* Default share of the working range (min -> max) a fill must reach to count. */
-  var DEFAULT_USEFUL_FRACTION = 0.5;
+  /* When a recipient carries no target, half of its working range is used. */
+  var DEFAULT_TARGET_FRACTION = 0.5;
   var MAX_EVENTS = 400;
 
   var VOLUME_UNITS = {
@@ -129,27 +129,40 @@
   }
 
   /**
+   * Resolve a recipient's target pressure: the pressure a fill has to reach to
+   * count as delivered.  Missing targets fall back to the middle of the working
+   * range; a target at or below the minimum would make the campaign endless and
+   * one above the maximum unreachable, so it is clamped into a usable band.
+   */
+  function targetFor(r) {
+    var t = (typeof r.targetBar === 'number' && isFinite(r.targetBar))
+      ? r.targetBar
+      : r.minBar + DEFAULT_TARGET_FRACTION * (r.maxBar - r.minBar);
+    var floor = r.minBar + MIN_USEFUL_GAIN_BAR;
+    if (r.maxBar <= floor) return r.maxBar;
+    return Math.min(Math.max(t, floor), r.maxBar);
+  }
+
+  /**
    * Run a full filling campaign.
    *
    * config = {
    *   donors:     [{ id, name, volumeL, pressureBar }],
-   *   recipients: [{ id, name, volumeL, pressureBar, maxBar, minBar }],
+   *   recipients: [{ id, name, volumeL, pressureBar, maxBar, minBar, targetBar }],
    *   method:     'smart' | 'dumb',
    *   allowUnsafe: boolean
    * }
    *
-   *   usefulFraction: 0..1 — share of the working range (min -> max) a fill
-   *                   must reach to count as delivered (default 0.5).
+   * Recipients are filled in turn.  A fill that reaches the recipient's target
+   * pressure is counted, and the bottle is then assumed to go into service,
+   * come back at its minimum pressure and queue for a refill.  The first fill
+   * that falls short of the target is still reported, but ends that bottle's
+   * campaign: every later attempt would deliver even less.
    *
-   * Recipients are filled in turn.  A fill that reaches the useful threshold
-   * is counted, and the bottle is then assumed to go into service, come back
-   * at its minimum pressure and queue for a refill.  The first fill that falls
-   * short of the threshold is still reported, but ends that bottle's campaign:
-   * every later attempt would deliver even less.
-   *
-   * The threshold is what makes the fill count well defined.  Without it,
-   * topping a bottle from its minimum by a hair would count as a fill and the
-   * campaign would never end.
+   * The target is what makes the fill count well defined.  Without it, topping
+   * a bottle up from its minimum by a hair would count as a fill and the
+   * campaign would never end.  It is therefore forced above the minimum, and
+   * capped at the maximum working pressure.
    */
   function simulate(config) {
     var donors = config.donors.map(function (d) {
@@ -159,14 +172,12 @@
     var recips = config.recipients.map(function (r) {
       return { id: r.id, name: r.name, volumeL: r.volumeL, pressureBar: r.pressureBar,
                startBar: r.pressureBar, maxBar: r.maxBar, minBar: r.minBar,
+               targetBar: targetFor(r),
                active: r.volumeL > 0 && r.maxBar > r.minBar, fills: 0, full: 0 };
     });
 
     var method = config.method === 'dumb' ? 'dumb' : 'smart';
     var allowUnsafe = !!config.allowUnsafe;
-    var usefulFraction = typeof config.usefulFraction === 'number'
-      ? Math.max(0.01, Math.min(1, config.usefulFraction))
-      : DEFAULT_USEFUL_FRACTION;
     var events = [];
     var bankStart = donors.reduce(function (s, d) { return s + content(d.volumeL, d.startBar); }, 0);
 
@@ -180,9 +191,12 @@
         var res = fillOnce(donors, r, method, allowUnsafe);
         if (res.transfers.length === 0) { r.active = false; continue; }
 
-        var target = r.minBar + usefulFraction * (r.maxBar - r.minBar);
-        var usable = res.endP >= target - EPS;
+        var target = r.targetBar;
         var full = res.endP >= r.maxBar - Math.max(MIN_USEFUL_GAIN_BAR, 0.005 * r.maxBar);
+        /* A bottle that is effectively at its maximum always counts, even if
+           the target was set to the maximum itself, which equalising can only
+           approach asymptotically. */
+        var usable = full || res.endP >= target - EPS;
 
         events.push({
           index: events.length + 1,
@@ -219,7 +233,6 @@
       events: events,
       donors: donors,
       recipients: recips,
-      usefulFraction: usefulFraction,
       usableFills: events.filter(function (e) { return e.status !== 'short'; }).length,
       fullFills: events.filter(function (e) { return e.status === 'full'; }).length,
       shortFills: events.filter(function (e) { return e.status === 'short'; }).length,
@@ -238,8 +251,8 @@
     PRESSURE_UNITS: PRESSURE_UNITS,
     toLitre: toLitre, fromLitre: fromLitre, toBar: toBar, fromBar: fromBar,
     freeAirLitres: freeAirLitres, content: content,
-    equalise: equalise, simulate: simulate,
-    DEFAULT_USEFUL_FRACTION: DEFAULT_USEFUL_FRACTION
+    equalise: equalise, simulate: simulate, targetFor: targetFor,
+    DEFAULT_TARGET_FRACTION: DEFAULT_TARGET_FRACTION
   };
 
   global.GasFill = api;

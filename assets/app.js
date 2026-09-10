@@ -11,11 +11,15 @@
 
   /* ------------------------------------------------------------------ state */
 
+  /* Half of the working range — the fallback when no target is given. */
+  function midTarget(min, max) {
+    return Math.round((min + G.DEFAULT_TARGET_FRACTION * (max - min)) * 10) / 10;
+  }
+
   function defaultState() {
     return {
       method: 'smart',
       allowUnsafe: false,
-      usefulPct: 50,
       donors: [
         { id: 'd1', name: 'Bank A', volume: 50, volumeUnit: 'L', pressure: 232, pressureUnit: 'bar' },
         { id: 'd2', name: 'Bank B', volume: 50, volumeUnit: 'L', pressure: 180, pressureUnit: 'bar' },
@@ -23,7 +27,7 @@
       ],
       recipients: [
         { id: 'r1', name: 'Tank 1', volume: 12, volumeUnit: 'L', pressure: 40, pressureUnit: 'bar',
-          max: 232, min: 50 }
+          max: 232, min: 50, target: 180 }
       ]
     };
   }
@@ -51,17 +55,19 @@
     return {
       method: raw.method === 'dumb' ? 'dumb' : 'smart',
       allowUnsafe: !!raw.allowUnsafe,
-      usefulPct: Math.max(1, Math.min(100, num(raw.usefulPct, 50))),
       donors: raw.donors.map(function (d, i) {
         return { id: d.id || nextId('d'), name: String(d.name || 'Donor ' + (i + 1)).slice(0, 24),
                  volume: num(d.volume, 50), volumeUnit: vol(d.volumeUnit),
                  pressure: num(d.pressure, 200), pressureUnit: pre(d.pressureUnit) };
       }),
       recipients: raw.recipients.map(function (r, i) {
+        var mx = num(r.max, 232), mn = num(r.min, 50);
         return { id: r.id || nextId('r'), name: String(r.name || 'Tank ' + (i + 1)).slice(0, 24),
                  volume: num(r.volume, 12), volumeUnit: vol(r.volumeUnit),
                  pressure: num(r.pressure, 50), pressureUnit: pre(r.pressureUnit),
-                 max: num(r.max, 232), min: num(r.min, 50) };
+                 max: mx, min: mn,
+                 /* setups saved before targets were per bottle carry none */
+                 target: num(r.target, midTarget(mn, mx)) };
       })
     };
   }
@@ -92,6 +98,7 @@
   function pBar(b) { return G.toBar(b.pressure, b.pressureUnit); }
   function maxBar(r) { return G.toBar(r.max, r.pressureUnit); }
   function minBar(r) { return G.toBar(r.min, r.pressureUnit); }
+  function targetBar(r) { return G.toBar(r.target, r.pressureUnit); }
 
   /* -------------------------------------------------------- bottle graphic */
 
@@ -146,8 +153,9 @@
     return out + '</select>';
   }
 
-  function numField(label, key, value, unitKind, unitValue) {
-    return '<label class="field"><span>' + label + '</span><div class="combo">' +
+  function numField(label, key, value, unitKind, unitValue, title) {
+    return '<label class="field"' + (title ? ' title="' + esc(title) + '"' : '') +
+      '><span>' + label + '</span><div class="combo">' +
       '<input type="number" step="any" min="0" data-key="' + key + '" value="' + value + '">' +
       (unitKind ? unitSelect(unitKind, unitValue) : '') + '</div></label>';
   }
@@ -173,8 +181,14 @@
       numField('Volume', 'volume', model.volume, 'volume', model.volumeUnit) +
       numField('Pressure', 'pressure', model.pressure, 'pressure', model.pressureUnit);
     if (kind === 'recipient') {
-      fields += numField('Max pressure', 'max', model.max, null, null) +
-                numField('Min pressure', 'min', model.min, null, null);
+      fields += numField('Max pressure', 'max', model.max, null, null,
+                  'Highest working pressure. Transfers stop here and no donor above it is connected ' +
+                  'unless unsafe filling is allowed.') +
+                numField('Min pressure', 'min', model.min, null, null,
+                  'The bottle comes back for a refill at this pressure.') +
+                numField('Fill target', 'target', model.target, null, null,
+                  'A fill counts once it reaches this pressure. The bottle then goes into service and ' +
+                  'returns at its minimum for the next fill.');
     }
     row.innerHTML =
       '<div class="brow-viz"></div>' +
@@ -192,11 +206,12 @@
         model.volume = roundTo(G.fromLitre(litres, t.value), VOL_DECIMALS[t.value]);
         setField(row, 'volume', model.volume);
       } else if (unit === 'pressure') {
-        var bars = ['pressure', 'max', 'min'].map(function (k) {
+        var keys = ['pressure', 'max', 'min', 'target'];
+        var bars = keys.map(function (k) {
           return model[k] == null ? null : G.toBar(model[k], model.pressureUnit);
         });
         model.pressureUnit = t.value;
-        ['pressure', 'max', 'min'].forEach(function (k, i) {
+        keys.forEach(function (k, i) {
           if (bars[i] == null) return;
           model[k] = roundTo(G.fromBar(bars[i], t.value), PRESS_DECIMALS[t.value]);
           setField(row, k, model[k]);
@@ -241,7 +256,8 @@
       } else {
         var mx = maxBar(m), mn = minBar(m);
         frac = mx > 0 ? p / mx : 0;
-        ticks = [{ frac: mn / (mx || 1), kind: 'min' }];
+        ticks = [{ frac: mn / (mx || 1), kind: 'min' },
+                 { frac: targetBar(m) / (mx || 1), kind: 'target' }];
         if (p > mx * 1.0001) tone = 'dangerlevel';
         else if (p < mn) tone = 'warnlevel';
         invalid = volL(m) <= 0 || mx <= mn;
@@ -259,7 +275,6 @@
     return {
       method: method || state.method,
       allowUnsafe: state.allowUnsafe,
-      usefulFraction: state.usefulPct / 100,
       donors: state.donors.filter(function (d) { return volL(d) > 0; }).map(function (d) {
         return { id: d.id, name: d.name, volumeL: volL(d), pressureBar: pBar(d) };
       }),
@@ -267,7 +282,7 @@
         return volL(r) > 0 && maxBar(r) > minBar(r);
       }).map(function (r) {
         return { id: r.id, name: r.name, volumeL: volL(r), pressureBar: pBar(r),
-                 maxBar: maxBar(r), minBar: minBar(r) };
+                 maxBar: maxBar(r), minBar: minBar(r), targetBar: targetBar(r) };
       })
     };
   }
@@ -284,6 +299,13 @@
       if (volL(r) <= 0) issues.push(['error', esc(r.name) + ': volume must be greater than zero.']);
       if (maxBar(r) <= minBar(r)) {
         issues.push(['error', esc(r.name) + ': maximum pressure must be above the minimum pressure.']);
+      }
+      if (targetBar(r) <= minBar(r) + 1e-9) {
+        issues.push(['error', esc(r.name) + ': the fill target must be above the minimum pressure, ' +
+          'otherwise a bottle would count as filled the moment it is topped up at all.']);
+      } else if (targetBar(r) > maxBar(r) + 1e-9) {
+        issues.push(['warn', esc(r.name) + ': the fill target sits above the maximum working pressure — ' +
+          fmtP(maxBar(r), r.pressureUnit) + ' is used instead.']);
       }
       if (pBar(r) > maxBar(r) + 1e-9) {
         issues.push(['warn', esc(r.name) + ' already sits above its maximum working pressure (' +
@@ -359,7 +381,7 @@
     var mx = r ? maxBar(r) : ev.endP;
     var tagClass = ev.status === 'full' ? 'full' : (ev.status === 'usable' ? 'usable' : 'short');
     var tagText = ev.status === 'full' ? 'at maximum'
-      : (ev.status === 'usable' ? 'counted' : 'short of threshold');
+      : (ev.status === 'usable' ? 'counted' : 'short of target');
 
     var steps = ev.transfers.map(function (t, i) {
       var d = modelById(t.donorId);
@@ -379,7 +401,7 @@
         '<span class="fill-title">' + esc(ev.recipientName) + ' <span class="to">' +
           fmtPNum(ev.startP, u) + ' &rarr; ' + fmtP(ev.endP, u) + '</span></span>' +
         '<span class="fill-bar" title="' + fmtP(ev.startP, u) + ' &rarr; ' + fmtP(ev.endP, u) +
-          ', threshold ' + fmtP(ev.target, u) + ' of ' + fmtP(mx, u) + '">' +
+          ', target ' + fmtP(ev.target, u) + ', maximum ' + fmtP(mx, u) + '">' +
           '<i style="width:' + (100 * Math.min(1, ev.startP / mx)).toFixed(1) + '%"></i>' +
           '<b style="width:' + (100 * Math.min(1, ev.endP / mx)).toFixed(1) + '%"></b>' +
           '<u style="left:' + (100 * Math.min(1, ev.target / mx)).toFixed(1) + '%"></u></span>' +
@@ -399,6 +421,10 @@
       : 'Sequential: fullest donor first, equalised until spent.';
 
     var issues = validate();
+    if (result.truncated) {
+      issues.unshift(['warn', 'The plan was cut off after ' + result.events.length +
+        ' fills. Raise a fill target to get a shorter, more realistic plan.']);
+    }
     if (result.unsafeTransfers) {
       issues.unshift(['error', result.unsafeTransfers + ' transfer(s) connect a donor above the recipient’s ' +
         'maximum working pressure. Filling stops at the maximum, but the bottle and valve see the full donor pressure.']);
@@ -474,13 +500,6 @@
     });
   });
 
-  var usefulInput = document.getElementById('usefulPct');
-  usefulInput.addEventListener('input', function () {
-    var v = parseFloat(usefulInput.value);
-    state.usefulPct = isFinite(v) ? Math.max(1, Math.min(100, v)) : 50;
-    refresh();
-  });
-
   var unsafeChk = document.getElementById('unsafeChk');
   unsafeChk.addEventListener('change', function () {
     state.allowUnsafe = unsafeChk.checked;
@@ -500,7 +519,8 @@
         state.recipients.push({ id: nextId('r'), name: 'Tank ' + (state.recipients.length + 1),
           volume: lr ? lr.volume : 12, volumeUnit: lr ? lr.volumeUnit : 'L',
           pressure: lr ? lr.min : 50, pressureUnit: lr ? lr.pressureUnit : 'bar',
-          max: lr ? lr.max : 232, min: lr ? lr.min : 50 });
+          max: lr ? lr.max : 232, min: lr ? lr.min : 50,
+          target: lr ? lr.target : midTarget(50, 232) });
       }
       renderLists();
       refresh();
@@ -536,7 +556,6 @@
   document.getElementById('resetBtn').addEventListener('click', function () {
     state = defaultState();
     unsafeChk.checked = state.allowUnsafe;
-    usefulInput.value = state.usefulPct;
     syncMethodButtons();
     renderLists();
     refresh();
@@ -558,7 +577,6 @@
       : (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark')));
 
   unsafeChk.checked = state.allowUnsafe;
-  usefulInput.value = state.usefulPct;
   syncMethodButtons();
   renderLists();
   refresh();
