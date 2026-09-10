@@ -54,18 +54,65 @@ function withTarget(t) {
   var r = fresh(tank); r[0].targetBar = t; return r;
 }
 
-test('smart cascade yields at least as many fills as sequential', function () {
+test('cascade fills are stronger than sequential ones', function () {
   var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
   var dumb = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'dumb' });
-  assert.ok(smart.usableFills >= dumb.usableFills,
-    'smart ' + smart.usableFills + ' < dumb ' + dumb.usableFills);
-  /* And every counted fill sits at a higher pressure than the sequential one. */
+  assert.ok(smart.usableFreeAirL > dumb.usableFreeAirL,
+    'usable air: smart ' + smart.usableFreeAirL.toFixed(0) + ' should beat dumb ' +
+    dumb.usableFreeAirL.toFixed(0));
+  assert.ok(smart.avgFillPressureBar > dumb.avgFillPressureBar,
+    'average fill: smart ' + smart.avgFillPressureBar.toFixed(1) + ' should beat dumb ' +
+    dumb.avgFillPressureBar.toFixed(1));
+  /* And every fill in sequence sits at a higher pressure than the sequential one. */
   var n = Math.min(smart.events.length, dumb.events.length);
   for (var i = 0; i < n; i++) {
     assert.ok(smart.events[i].endP >= dumb.events[i].endP - 1e-9,
       'fill ' + (i + 1) + ': smart ' + smart.events[i].endP + ' < dumb ' + dumb.events[i].endP);
   }
-  console.log('       smart=' + smart.usableFills + ' fills, dumb=' + dumb.usableFills + ' fills');
+  console.log('       smart: ' + smart.usableFills + ' fills at ' + smart.avgFillPressureBar.toFixed(1) +
+    ' bar avg, dumb: ' + dumb.usableFills + ' at ' + dumb.avgFillPressureBar.toFixed(1) + ' bar');
+});
+test('a cascade fill draws on at most two donors', function () {
+  assert.strictEqual(G.MAX_DONORS_PER_FILL, 2);
+  var wide = [];
+  for (var i = 0; i < 6; i++) wide.push({ id: 'w' + i, name: 'W' + i, volumeL: 50, pressureBar: 90 + i * 30 });
+  var res = G.simulate({ donors: wide, recipients: fresh(tank), method: 'smart' });
+  res.events.forEach(function (e) {
+    assert.ok(e.transfers.length <= 2, 'fill ' + e.index + ' used ' + e.transfers.length + ' donors');
+  });
+  assert.ok(res.events.some(function (e) { return e.transfers.length === 2; }),
+    'a cascade should use its second donor');
+});
+test('the cascade spends the lowest bottle first and tops up from the fullest', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var first = res.events[0].transfers;
+  assert.strictEqual(first.length, 2);
+  assert.strictEqual(first[0].donorId, 'd3', 'bulk should come from the lowest donor');
+  assert.strictEqual(first[1].donorId, 'd1', 'top-up should come from the fullest donor');
+});
+test('more fills is not better: sequential trades pressure for count', function () {
+  /* Small bottle, low target: sequential racks up more but weaker fills. */
+  var sixes = [];
+  for (var i = 0; i < 3; i++) sixes.push({ id: 's' + i, name: 'S' + i, volumeL: 6, pressureBar: 300 });
+  var hpa = [{ id: 'h', name: 'HPA', volumeL: 68 * 0.016387064, pressureBar: 50,
+               maxBar: 300, minBar: 50, targetBar: 100 }];
+  var smart = G.simulate({ donors: fresh(sixes), recipients: fresh(hpa), method: 'smart' });
+  var dumb = G.simulate({ donors: fresh(sixes), recipients: fresh(hpa), method: 'dumb' });
+  assert.ok(dumb.usableFills > smart.usableFills, 'expected sequential to show more fills here');
+  assert.ok(smart.usableFreeAirL > dumb.usableFreeAirL, 'cascade should still deliver more usable air');
+  assert.ok(smart.avgFillPressureBar > dumb.avgFillPressureBar, 'cascade fills should be stronger');
+});
+test('the quality figures average the counted fills only', function () {
+  var res = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
+  var counted = res.events.filter(function (e) { return e.status !== 'short'; });
+  var mean = counted.reduce(function (a, e) { return a + e.endP; }, 0) / counted.length;
+  near(res.avgFillPressureBar, mean, 1e-9);
+  var air = counted.reduce(function (a, e) {
+    return a + (G.freeAirLitres(12, e.endP) - G.freeAirLitres(12, 50));
+  }, 0);
+  near(res.usableFreeAirL, air, 1e-6);
+  assert.ok(res.events.some(function (e) { return e.status === 'short'; }),
+    'this fixture should end on a short fill, which must stay out of the averages');
 });
 test('smart draws on several donors per fill, dumb on exactly one', function () {
   var smart = G.simulate({ donors: fresh(bank), recipients: fresh(tank), method: 'smart' });
@@ -136,6 +183,21 @@ test('a donor above the maximum is held back unless unsafe filling is allowed', 
   unsafe.events.forEach(function (e) {
     e.transfers.forEach(function (t) { assert.ok(t.recipTo <= 200 + 1e-9); });
   });
+});
+test('a limit typed in another unit does not make an equal donor unsafe', function () {
+  /* 300 bar written as whole psi comes back as 299.99 bar. */
+  var maxBar = G.toBar(Math.round(G.fromBar(300, 'psi')), 'psi');
+  assert.ok(maxBar < 300, 'the rounded limit should sit just under 300 bar: ' + maxBar);
+  assert.ok(!G.exceedsMax(300, maxBar), 'a 300 bar donor must still be allowed');
+  assert.ok(G.exceedsMax(310, maxBar), 'a genuinely higher donor must still be caught');
+  var res = G.simulate({
+    donors: [{ id: 'd', name: 'D', volumeL: 6, pressureBar: 300 }],
+    recipients: [{ id: 'r', name: 'R', volumeL: 1.1, pressureBar: 50, maxBar: maxBar,
+                   minBar: 50, targetBar: 200 }],
+    method: 'smart'
+  });
+  assert.ok(res.usableFills > 0, 'the fill should go ahead');
+  assert.strictEqual(res.unsafeTransfers, 0, 'and must not be flagged unsafe');
 });
 test('recipients are cycled and each fill returns them to the minimum', function () {
   var two = [

@@ -169,9 +169,22 @@ input:focus, select:focus { outline: none; border-color: var(--accent); box-shad
 .stat-l { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-top: 2px; }
 .stat.accent .stat-v { color: var(--accent); }
 
-.compare { font-size: .8rem; color: var(--muted); margin: 12px 0 2px; }
-.compare b { color: var(--text); font-weight: 600; }
-.compare .up { color: var(--ok); }
+.compare { margin: 14px 0 2px; }
+.cmp { width: 100%; border-collapse: collapse; font-size: .8rem; font-variant-numeric: tabular-nums; }
+.cmp th, .cmp td { text-align: right; padding: 7px 10px; border-bottom: 1px solid var(--line-soft); }
+.cmp thead th {
+  font-weight: 500; font-size: .68rem; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted); border-bottom-color: var(--line); white-space: nowrap;
+}
+.cmp th[scope="row"] { text-align: left; font-weight: 600; white-space: nowrap; }
+.cmp tbody tr.is-active { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cmp tbody tr.is-active th[scope="row"] { color: var(--accent); }
+.cmp tbody tr:not(.is-active) { color: var(--muted); }
+.cmp-now { font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 500;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px;
+  padding: 1px 6px; margin-left: 4px; }
+.cmp-note { font-size: .8rem; color: var(--muted); margin: 10px 0 0; }
+.cmp-note b { color: var(--text); font-weight: 600; }
 
 .timeline { list-style: none; margin: 14px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .fill {
@@ -236,3 +249,9 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px; color: var(--muted)
 
 .fill-bar u { position: absolute; top: -2px; bottom: -2px; width: 0; border-left: 1px dashed var(--muted); text-decoration: none; }
 .stat.small .stat-v { font-size: .95rem; padding: .25rem 0; }
+
+@media (max-width: 620px) {
+  /* The comparison table keeps its columns; it scrolls rather than squashing. */
+  .compare { overflow-x: auto; }
+  .cmp { min-width: 460px; }
+}

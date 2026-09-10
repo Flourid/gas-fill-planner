@@ -26,9 +26,9 @@ Treat the output as the isothermal best case.
 
 **Strategies.**
 
-**Smart (cascade).** One fill draws on as many donors as it takes, starting with the lowest usable
-pressure and working up, so the bulk of the gas comes from bottles that would otherwise be unusable and
-the highest-pressure bottle is only needed for the final top-up.
+**Smart (cascade).** Two donors per fill at most: the lowest usable bottle carries the bulk of the
+charge, then the fullest one tops the recipient up as close to its maximum as equalising allows.
+Spending the cheap gas first is what keeps the high-pressure bottle useful for later fills.
 
 **Dumb (sequential).** Donors are never combined. One bottle stays on the station and is drained fill
 after fill for as long as it alone can bring the recipient to its target. When it can no longer manage
@@ -36,10 +36,23 @@ that it is set aside — with whatever is left still in it — and the fullest b
 target takes over. The plan closes with one best-effort transfer from whichever bottle gets closest,
 so the end pressure is visible even when nothing reaches the target any more.
 
-With the default example — three 50 L donors at 232 / 180 / 120 bar filling a 12 L tank that works
-between 50 and 232 bar and counts as filled at 150 bar — the cascade delivers 6 fills against 3 for the
-sequential method, from the same bank. The sequential run also ends with 155 bar left in one donor and
-the third never touched, which is exactly the gas the cascade turns into fills.
+### Reading the results
+
+Fill count alone is misleading. Sequential filling often shows *more* fills than the cascade, because
+each one is weaker and spends less gas — a bottle handed back at 167 bar is not worth as much as one
+handed back at 188 bar. So the plan compares both methods on three figures:
+
+| Figure | What it says |
+| --- | --- |
+| Fills | How many times a bottle reached its target. |
+| Average after fill | The pressure a fill ends at, averaged over the counted fills. |
+| Usable air | Air held above the minimum pressure, summed over the counted fills — the air you actually get to spend. |
+
+With the default example — three 6 L donors at 300 bar filling a 68 in³ tank that works between 50 and
+300 bar and counts as filled at 200 bar — the cascade delivers 10 fills averaging 254 bar and 79 ft³ of
+usable air, against 6 fills averaging 244 bar and 45 ft³ for the sequential method. Lower the target to
+100 bar and the sequential method shows *more* fills than the cascade while still delivering less
+usable air, which is exactly why the count is not the headline.
 
 **Fill counting.** A transfer stops at the recipient's maximum working pressure; the surplus stays in
 the donor. Every recipient carries its own **fill target** — the pressure, in that bottle's own unit,
@@ -60,6 +73,10 @@ a hair of its maximum always counts, since equalising can only approach the maxi
 **Safety limit.** A donor above a recipient's maximum working pressure is never connected. Enabling
 *Allow unsafe filling* permits it and flags every affected transfer: filling still stops at the
 recipient's maximum, but the bottle and valve see the full donor pressure.
+
+The limit carries 0.1% of slack, because a 300 bar limit typed as whole psi comes back as 299.99 bar
+and a 300 bar donor would otherwise be rejected purely for having been measured in another unit. The
+slack is far inside the accuracy of any gauge you would read this off.
 
 **Units.** Volume in L, cm³, in³ or ft³; pressure in bar, psi or MPa, chosen per bottle. Results are
 shown in the units of the bottle they belong to, so a donor bank in bar feeding a tank in psi reads

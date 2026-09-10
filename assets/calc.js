@@ -23,6 +23,13 @@
   var MIN_USEFUL_GAIN_BAR = 0.05;
   /* When a recipient carries no target, half of its working range is used. */
   var DEFAULT_TARGET_FRACTION = 0.5;
+  /* Bottles a cascade fill may draw on: one for the bulk, one for the top-up. */
+  var MAX_DONORS_PER_FILL = 2;
+  /* Slack on the maximum-pressure rule.  Expressing a 300 bar limit in psi and
+     rounding it to whole units gives 4351 psi, which is 299.99 bar — without
+     slack a 300 bar donor would count as unsafe purely because the recipient's
+     limit was typed in another unit.  It is well inside gauge accuracy. */
+  var MAX_PRESSURE_SLACK = 0.001;
   var MAX_EVENTS = 400;
 
   var VOLUME_UNITS = {
@@ -72,11 +79,16 @@
     return { donorP: pEq, recipP: pEq, capped: false };
   }
 
+  /* Is this donor pressure above a recipient's maximum working pressure? */
+  function exceedsMax(donorPressureBar, maxBar) {
+    return donorPressureBar > maxBar * (1 + MAX_PRESSURE_SLACK) + EPS;
+  }
+
   /* Can this donor push gas into this recipient at all? */
   function donorUsable(donor, recip, allowUnsafe) {
     if (donor.volumeL <= 0) return false;
     if (donor.pressureBar <= recip.pressureBar + MIN_USEFUL_GAIN_BAR) return false;
-    if (donor.pressureBar > recip.maxBar + EPS && !allowUnsafe) return false;
+    if (exceedsMax(donor.pressureBar, recip.maxBar) && !allowUnsafe) return false;
     return true;
   }
 
@@ -104,29 +116,39 @@
       recipTo: r.recipP,
       deliveredFreeAirL: freeAirLitres(recip.volumeL, r.recipP) - freeAirLitres(recip.volumeL, recipFrom),
       capped: r.capped,
-      unsafe: donorFrom > recip.maxBar + EPS
+      unsafe: exceedsMax(donorFrom, recip.maxBar)
     };
   }
 
+  /* Lowest- or highest-pressure bottle that can still push gas in. */
+  function pickUsable(donors, recip, allowUnsafe, wantLowest) {
+    var best = null;
+    for (var i = 0; i < donors.length; i++) {
+      var d = donors[i];
+      if (!donorUsable(d, recip, allowUnsafe)) continue;
+      if (predict(d, recip) - recip.pressureBar < MIN_USEFUL_GAIN_BAR) continue;
+      if (best === null) { best = d; continue; }
+      if (wantLowest ? d.pressureBar < best.pressureBar : d.pressureBar > best.pressureBar) best = d;
+    }
+    return best;
+  }
+
   /**
-   * Cascade filling: connect the lowest usable donor first and keep going up
-   * the bank, so the high-pressure bottle is only needed for the final top-up.
-   * One fill may draw on several donors.
+   * Cascade filling, two bottles at most: the lowest usable donor carries the
+   * bulk of the charge, then the fullest bottle tops the recipient up as close
+   * to its maximum as equalising allows.  Spending the cheap gas first is what
+   * keeps the high-pressure bottle useful for later fills.
    */
   function fillCascade(donors, recip, allowUnsafe) {
     var startP = recip.pressureBar;
     var transfers = [];
-    var guard = 0;
 
-    while (recip.pressureBar < recip.maxBar - MIN_USEFUL_GAIN_BAR && guard++ < 200) {
-      var donor = null;
-      for (var i = 0; i < donors.length; i++) {
-        var d = donors[i];
-        if (!donorUsable(d, recip, allowUnsafe)) continue;
-        if (donor === null || d.pressureBar < donor.pressureBar) donor = d;
-      }
+    while (transfers.length < MAX_DONORS_PER_FILL &&
+           recip.pressureBar < recip.maxBar - MIN_USEFUL_GAIN_BAR) {
+      /* Bulk from the lowest bottle, top-up from the fullest one. */
+      var wantLowest = transfers.length === 0;
+      var donor = pickUsable(donors, recip, allowUnsafe, wantLowest);
       if (!donor) break;
-      if (predict(donor, recip) - recip.pressureBar < MIN_USEFUL_GAIN_BAR) break;
       transfers.push(applyTransfer(donor, recip));
     }
 
@@ -216,7 +238,8 @@
    * config = {
    *   donors:     [{ id, name, volumeL, pressureBar }],
    *   recipients: [{ id, name, volumeL, pressureBar, maxBar, minBar, targetBar }],
-   *   method:     'smart' (cascade) | 'dumb' (sequential, one donor per fill),
+   *   method:     'smart' (cascade, at most two donors per fill)
+   *               | 'dumb' (sequential, one donor per fill),
    *   allowUnsafe: boolean
    * }
    *
@@ -275,6 +298,8 @@
           endP: res.endP,
           status: full ? 'full' : (usable ? 'usable' : 'short'),
           target: target,
+          /* Air the bottle can actually spend before it is due for a refill. */
+          usableFreeAirL: freeAirLitres(r.volumeL, res.endP) - freeAirLitres(r.volumeL, r.minBar),
           transfers: res.transfers,
           unsafe: res.transfers.some(function (t) { return t.unsafe; })
         });
@@ -296,6 +321,13 @@
     var delivered = events.reduce(function (s, e) {
       return s + e.transfers.reduce(function (t, x) { return t + x.deliveredFreeAirL; }, 0);
     }, 0);
+    /* Counted fills carry the quality figures: a plan with many weak fills is
+       not better than one with fewer strong ones. */
+    var counted = events.filter(function (e) { return e.status !== 'short'; });
+    var usableAir = counted.reduce(function (s, e) { return s + Math.max(0, e.usableFreeAirL); }, 0);
+    var avgFill = counted.length
+      ? counted.reduce(function (s, e) { return s + e.endP; }, 0) / counted.length
+      : 0;
 
     return {
       method: method,
@@ -309,6 +341,8 @@
       unsafeTransfers: events.reduce(function (s, e) {
         return s + e.transfers.filter(function (t) { return t.unsafe; }).length; }, 0),
       deliveredFreeAirL: delivered,
+      usableFreeAirL: usableAir,
+      avgFillPressureBar: avgFill,
       bankUsedFraction: bankStart > 0 ? (bankStart - bankEnd) / bankStart : 0,
       truncated: events.length >= MAX_EVENTS
     };
@@ -320,8 +354,9 @@
     PRESSURE_UNITS: PRESSURE_UNITS,
     toLitre: toLitre, fromLitre: fromLitre, toBar: toBar, fromBar: fromBar,
     freeAirLitres: freeAirLitres, content: content,
-    equalise: equalise, simulate: simulate, targetFor: targetFor,
-    DEFAULT_TARGET_FRACTION: DEFAULT_TARGET_FRACTION
+    equalise: equalise, simulate: simulate, targetFor: targetFor, exceedsMax: exceedsMax,
+    DEFAULT_TARGET_FRACTION: DEFAULT_TARGET_FRACTION,
+    MAX_DONORS_PER_FILL: MAX_DONORS_PER_FILL
   };
 
   global.GasFill = api;

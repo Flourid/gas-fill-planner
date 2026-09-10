@@ -21,13 +21,13 @@
       method: 'smart',
       allowUnsafe: false,
       donors: [
-        { id: 'd1', name: 'Bank A', volume: 50, volumeUnit: 'L', pressure: 232, pressureUnit: 'bar' },
-        { id: 'd2', name: 'Bank B', volume: 50, volumeUnit: 'L', pressure: 180, pressureUnit: 'bar' },
-        { id: 'd3', name: 'Bank C', volume: 50, volumeUnit: 'L', pressure: 120, pressureUnit: 'bar' }
+        { id: 'd1', name: 'Bank A', volume: 6, volumeUnit: 'L', pressure: 300, pressureUnit: 'bar' },
+        { id: 'd2', name: 'Bank B', volume: 6, volumeUnit: 'L', pressure: 300, pressureUnit: 'bar' },
+        { id: 'd3', name: 'Bank C', volume: 6, volumeUnit: 'L', pressure: 300, pressureUnit: 'bar' }
       ],
       recipients: [
-        { id: 'r1', name: 'Tank 1', volume: 12, volumeUnit: 'L', pressure: 40, pressureUnit: 'bar',
-          max: 232, min: 50, target: 150 }
+        { id: 'r1', name: 'Tank 1', volume: 68, volumeUnit: 'in3', pressure: 50, pressureUnit: 'bar',
+          max: 300, min: 50, target: 200 }
       ]
     };
   }
@@ -57,13 +57,13 @@
       allowUnsafe: !!raw.allowUnsafe,
       donors: raw.donors.map(function (d, i) {
         return { id: d.id || nextId('d'), name: String(d.name || 'Donor ' + (i + 1)).slice(0, 24),
-                 volume: num(d.volume, 50), volumeUnit: vol(d.volumeUnit),
-                 pressure: num(d.pressure, 200), pressureUnit: pre(d.pressureUnit) };
+                 volume: num(d.volume, 6), volumeUnit: vol(d.volumeUnit),
+                 pressure: num(d.pressure, 300), pressureUnit: pre(d.pressureUnit) };
       }),
       recipients: raw.recipients.map(function (r, i) {
-        var mx = num(r.max, 232), mn = num(r.min, 50);
+        var mx = num(r.max, 300), mn = num(r.min, 50);
         return { id: r.id || nextId('r'), name: String(r.name || 'Tank ' + (i + 1)).slice(0, 24),
-                 volume: num(r.volume, 12), volumeUnit: vol(r.volumeUnit),
+                 volume: num(r.volume, 68), volumeUnit: vol(r.volumeUnit),
                  pressure: num(r.pressure, 50), pressureUnit: pre(r.pressureUnit),
                  max: mx, min: mn,
                  /* setups saved before targets were per bottle carry none */
@@ -89,6 +89,26 @@
     var v = G.fromLitre(litre, unit);
     return v.toFixed(VOL_DECIMALS[unit]) + ' ' + G.VOLUME_UNITS[unit].label;
   }
+  /* The unit shared by every recipient, or null when they disagree. */
+  function sharedRecipientUnit(key) {
+    var u = null;
+    for (var i = 0; i < state.recipients.length; i++) {
+      var v = state.recipients[i][key];
+      if (u === null) u = v;
+      else if (u !== v) return null;
+    }
+    return u;
+  }
+  function statPressureUnit() { return sharedRecipientUnit('pressureUnit') || 'bar'; }
+  /* Free air reads better in ft³ for bottles measured in in³ or ft³. */
+  function airUnit() {
+    var vu = sharedRecipientUnit('volumeUnit');
+    return (vu === 'in3' || vu === 'ft3') ? 'ft3' : 'L';
+  }
+  function fmtAir(litres) {
+    return Math.round(G.fromLitre(litres, airUnit())).toLocaleString();
+  }
+
   function esc(s) {
     return String(s).replace(/[&<>"]/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
@@ -307,7 +327,7 @@
         issues.push(['warn', esc(r.name) + ': the fill target sits above the maximum working pressure — ' +
           fmtP(maxBar(r), r.pressureUnit) + ' is used instead.']);
       }
-      if (pBar(r) > maxBar(r) + 1e-9) {
+      if (G.exceedsMax(pBar(r), maxBar(r))) {
         issues.push(['warn', esc(r.name) + ' already sits above its maximum working pressure (' +
           fmtP(pBar(r), r.pressureUnit) + ' > ' + fmtP(maxBar(r), r.pressureUnit) + ') — it cannot be filled.']);
       }
@@ -317,7 +337,7 @@
     });
     if (!state.allowUnsafe) {
       var blocked = state.donors.filter(function (d) {
-        return state.recipients.some(function (r) { return pBar(d) > maxBar(r) + 1e-9; });
+        return state.recipients.some(function (r) { return G.exceedsMax(pBar(d), maxBar(r)); });
       });
       if (blocked.length) {
         var names = blocked.map(function (d) { return esc(d.name); });
@@ -333,28 +353,13 @@
   /* ----------------------------------------------------------- plan render */
 
   function statBlock(result) {
-    var perRecipient = result.recipients.map(function (r) {
-      return esc(r.name) + ' ' + r.fills + '×';
-    }).join(' · ');
-    var counted = result.events.filter(function (e) { return e.status !== 'short'; });
-    var span = '—';
-    if (counted.length) {
-      var u = null, mixed = false;
-      counted.forEach(function (e) {
-        var m = modelById(e.recipientId);
-        var mu = m ? m.pressureUnit : 'bar';
-        if (u === null) u = mu; else if (u !== mu) mixed = true;
-      });
-      var hi = Math.max.apply(null, counted.map(function (e) { return e.endP; }));
-      var lo = Math.min.apply(null, counted.map(function (e) { return e.endP; }));
-      span = mixed ? fmtPNum(hi, 'bar') + ' → ' + fmtP(lo, 'bar')
-                   : fmtPNum(hi, u) + ' → ' + fmtP(lo, u);
-    }
+    var pu = statPressureUnit();
     var tiles = [
       ['accent', result.usableFills, result.usableFills === 1 ? 'Fill delivered' : 'Fills delivered'],
+      ['accent', result.usableFills ? fmtPNum(result.avgFillPressureBar, pu) : '—',
+        'Average after fill (' + G.PRESSURE_UNITS[pu].label + ')'],
+      ['', fmtAir(result.usableFreeAirL), 'Usable air delivered (' + G.VOLUME_UNITS[airUnit()].label + ')'],
       ['', result.transferCount, 'Transfers'],
-      ['small', span, 'Fill pressure, high to low'],
-      ['', Math.round(result.deliveredFreeAirL).toLocaleString(), 'Free air delivered (L)'],
       ['', Math.round(result.bankUsedFraction * 100) + '%', 'Donor bank used']
     ];
     var html = tiles.map(function (t) {
@@ -362,10 +367,82 @@
         t[2] + '</div></div>';
     }).join('');
     if (result.recipients.length > 1) {
+      var perRecipient = result.recipients.map(function (r) {
+        return esc(r.name) + ' ' + r.fills + '×';
+      }).join(' · ');
       html += '<div class="stat"><div class="stat-v" style="font-size:.95rem">' + perRecipient +
         '</div><div class="stat-l">Per bottle</div></div>';
     }
     return html;
+  }
+
+  /**
+   * Smart and dumb side by side.  Fill count alone is misleading — sequential
+   * filling often shows more, weaker fills — so the table carries the pressure
+   * each fill reaches and the air that is actually usable afterwards.
+   */
+  function comparisonHTML(smart, dumb) {
+    var pu = statPressureUnit();
+    var au = G.VOLUME_UNITS[airUnit()].label;
+    var rows = [['smart', 'Cascade', smart], ['dumb', 'Sequential', dumb]].map(function (row) {
+      var r = row[2];
+      return '<tr' + (state.method === row[0] ? ' class="is-active"' : '') + '>' +
+        '<th scope="row">' + row[1] +
+          (state.method === row[0] ? ' <span class="cmp-now">in use</span>' : '') + '</th>' +
+        '<td>' + r.usableFills + '</td>' +
+        '<td>' + (r.usableFills ? fmtPNum(r.avgFillPressureBar, pu) : '—') + '</td>' +
+        '<td>' + fmtAir(r.usableFreeAirL) + '</td>' +
+        '<td>' + Math.round(r.bankUsedFraction * 100) + '%</td></tr>';
+    }).join('');
+
+    return '<table class="cmp"><thead><tr><th scope="col">Method</th>' +
+      '<th scope="col">Fills</th>' +
+      '<th scope="col">Avg. after fill (' + G.PRESSURE_UNITS[pu].label + ')</th>' +
+      '<th scope="col">Usable air (' + au + ')</th>' +
+      '<th scope="col">Bank used</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      '<p class="cmp-note">' + verdict(smart, dumb) + '</p>';
+  }
+
+  function verdict(smart, dumb) {
+    if (!smart.usableFills && !dumb.usableFills) {
+      return 'Neither method can bring a bottle to its target from this bank.';
+    }
+    var pu = statPressureUnit();
+    var au = G.VOLUME_UNITS[airUnit()].label;
+    var airGain = dumb.usableFreeAirL > 0
+      ? (smart.usableFreeAirL / dumb.usableFreeAirL - 1) * 100 : null;
+    var pressureGain = smart.avgFillPressureBar - dumb.avgFillPressureBar;
+
+    if (smart.usableFreeAirL <= dumb.usableFreeAirL + 1e-6 && pressureGain <= 1e-9) {
+      return 'Both methods get the same out of this bank — with one donor, or donors at equal ' +
+        'pressure, there is nothing to cascade.';
+    }
+
+    var text;
+    if (airGain !== null && airGain >= 0.5) {
+      text = 'Cascade filling gets <b>' + airGain.toFixed(0) + '% more usable air</b> out of the same bank';
+    } else if (smart.usableFreeAirL > dumb.usableFreeAirL) {
+      text = 'Cascade filling gets <b>' + fmtAir(smart.usableFreeAirL - dumb.usableFreeAirL) + ' ' + au +
+        ' more usable air</b> out of the same bank';
+    } else {
+      text = 'Cascade filling gets the same air out of this bank';
+    }
+    if (pressureGain > 0 && smart.usableFills && dumb.usableFills) {
+      /* A pressure difference converts like a pressure: the units are pure
+         scale factors once both sides are gauge readings. */
+      text += ', with every fill ending <b>' + fmtP(pressureGain, pu) + '</b> higher on average';
+    }
+    text += '.';
+
+    if (dumb.usableFills > smart.usableFills) {
+      text += ' Sequential filling shows ' + (dumb.usableFills - smart.usableFills) +
+        ' more fills, but they are weaker ones: a bottle handed back at ' +
+        fmtP(dumb.avgFillPressureBar, pu) + ' holds less than one at ' +
+        fmtP(smart.avgFillPressureBar, pu) + '.';
+    } else if (smart.usableFills > dumb.usableFills) {
+      text += ' It also manages ' + (smart.usableFills - dumb.usableFills) + ' more fills.';
+    }
+    return text;
   }
 
   function legHTML(model, from, to, cls) {
@@ -414,10 +491,11 @@
   function renderPlan() {
     var cfg = buildConfig();
     var result = G.simulate(cfg);
-    var other = G.simulate(buildConfig(state.method === 'smart' ? 'dumb' : 'smart'));
+    var smart = state.method === 'smart' ? result : G.simulate(buildConfig('smart'));
+    var dumb = state.method === 'dumb' ? result : G.simulate(buildConfig('dumb'));
 
     document.getElementById('methodHint').textContent = state.method === 'smart'
-      ? 'Cascade: as many donors per fill as it takes, lowest usable pressure first.'
+      ? 'Cascade: two donors per fill — the lowest carries the bulk, the fullest tops up.'
       : 'Sequential: one donor per fill, drained until it can no longer reach the target.';
 
     var issues = validate();
@@ -438,21 +516,7 @@
     document.getElementById('stats').innerHTML = statBlock(result);
 
     var cmp = document.getElementById('compare');
-    if (!cfg.donors.length || !cfg.recipients.length) {
-      cmp.textContent = '';
-    } else {
-      var diff = result.usableFills - other.usableFills;
-      var mine = state.method === 'smart' ? 'Smart' : 'Dumb';
-      var theirs = state.method === 'smart' ? 'dumb' : 'smart';
-      cmp.innerHTML = diff === 0
-        ? '<b>' + mine + '</b> and ' + theirs + ' filling both manage <b>' + result.usableFills +
-          '</b> fill(s) with this bank.'
-        : (diff > 0
-            ? '<b>' + mine + '</b> filling gets <span class="up">' + diff + ' more fill(s)</span> than ' +
-              theirs + ' filling (' + result.usableFills + ' vs ' + other.usableFills + ').'
-            : '<b>' + mine + '</b> filling gets ' + (-diff) + ' fill(s) fewer than ' + theirs +
-              ' filling (' + result.usableFills + ' vs ' + other.usableFills + ').');
-    }
+    cmp.innerHTML = (cfg.donors.length && cfg.recipients.length) ? comparisonHTML(smart, dumb) : '';
 
     var timeline = document.getElementById('timeline');
     if (!result.events.length) {
@@ -512,15 +576,15 @@
         var last = state.donors[state.donors.length - 1];
         state.donors.push({ id: nextId('d'), name: 'Bank ' +
           String.fromCharCode(65 + state.donors.length % 26),
-          volume: last ? last.volume : 50, volumeUnit: last ? last.volumeUnit : 'L',
-          pressure: last ? last.pressure : 200, pressureUnit: last ? last.pressureUnit : 'bar' });
+          volume: last ? last.volume : 6, volumeUnit: last ? last.volumeUnit : 'L',
+          pressure: last ? last.pressure : 300, pressureUnit: last ? last.pressureUnit : 'bar' });
       } else {
         var lr = state.recipients[state.recipients.length - 1];
         state.recipients.push({ id: nextId('r'), name: 'Tank ' + (state.recipients.length + 1),
-          volume: lr ? lr.volume : 12, volumeUnit: lr ? lr.volumeUnit : 'L',
+          volume: lr ? lr.volume : 68, volumeUnit: lr ? lr.volumeUnit : 'in3',
           pressure: lr ? lr.min : 50, pressureUnit: lr ? lr.pressureUnit : 'bar',
-          max: lr ? lr.max : 232, min: lr ? lr.min : 50,
-          target: lr ? lr.target : midTarget(50, 232) });
+          max: lr ? lr.max : 300, min: lr ? lr.min : 50,
+          target: lr ? lr.target : midTarget(50, 300) });
       }
       renderLists();
       refresh();
