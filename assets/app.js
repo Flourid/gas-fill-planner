@@ -102,11 +102,9 @@
     return u;
   }
   function statPressureUnit() { return sharedRecipientUnit('pressureUnit') || 'bar'; }
-  /* Free air reads better in ft³ for bottles measured in in³ or ft³. */
-  function airUnit() {
-    var vu = sharedRecipientUnit('volumeUnit');
-    return (vu === 'in3' || vu === 'ft3') ? 'ft3' : 'L';
-  }
+  /* Free air is always reported in litres, whatever unit the bottles are
+     measured in, so the figure can be compared across setups. */
+  function airUnit() { return 'L'; }
   /* Number fields are plain text, because <input type="number"> silently drops
      a decimal comma: a German user typing "6,5" would end up with 65.  Values
      are shown with the decimal separator of the language and read back

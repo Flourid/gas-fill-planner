@@ -34,8 +34,8 @@
 
   var VOLUME_UNITS = {
     L:   { label: 'L',   toLitre: 1 },
-    cm3: { label: 'cm³', toLitre: 0.001 },
-    in3: { label: 'in³', toLitre: 0.016387064 },
+    cm3: { label: 'cc',  toLitre: 0.001 },
+    in3: { label: 'ci',  toLitre: 0.016387064 },
     ft3: { label: 'ft³', toLitre: 28.316846592 }
   };
 

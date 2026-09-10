@@ -46,11 +46,11 @@ handed back at 188 bar. So the plan compares both methods on three figures:
 | --- | --- |
 | Fills | How many times a bottle reached its target. |
 | Average after fill | The pressure a fill ends at, averaged over the counted fills. |
-| Usable air | Air held above the minimum pressure, summed over the counted fills — the air you actually get to spend. |
+| Usable air | Air held above the minimum pressure, summed over the counted fills — the air you actually get to spend. Always in litres, whatever unit the bottles are measured in. |
 
-With the default example — three 6 L donors at 300 bar filling a 68 in³ tank that works between 50 and
-300 bar and counts as filled at 200 bar — the cascade delivers 10 fills averaging 254 bar and 79 ft³ of
-usable air, against 6 fills averaging 244 bar and 45 ft³ for the sequential method. Lower the target to
+With the default example — three 6 L donors at 300 bar filling a 68 ci tank that works between 50 and
+300 bar and counts as filled at 200 bar — the cascade delivers 10 fills averaging 254 bar and 2,241 L of
+usable air, against 6 fills averaging 244 bar and 1,282 L for the sequential method. Lower the target to
 100 bar and the sequential method shows *more* fills than the cascade while still delivering less
 usable air, which is exactly why the count is not the headline.
 
@@ -78,11 +78,12 @@ The limit carries 1% of slack, to absorb both the rounding when a limit is typed
 bar as whole psi comes back as 299.99 bar) and ordinary gauge tolerance. In practice a 300 bar bottle
 may be filled from a donor reading up to 303 bar without being flagged.
 
-**Units.** Volume in L, cm³, in³ or ft³; pressure in bar, psi or MPa, chosen per bottle. Results are
+**Units.** Volume in L, cc, ci or ft³; pressure in bar, psi or MPa, chosen per bottle. Results are
 shown in the units of the bottle they belong to, so a donor bank in bar feeding a tank in psi reads
-correctly on both sides. Changing a unit converts every pressure on that bottle — current, maximum,
-minimum and target — so it re-expresses the same physical bottle rather than reinterpreting the
-numbers.
+correctly on both sides. Free air is the exception: it is always given in litres, so two setups can be
+compared even when their bottles are measured differently. Changing a unit converts every pressure on
+that bottle — current, maximum, minimum and target — so it re-expresses the same physical bottle rather
+than reinterpreting the numbers.
 
 ## Languages
 
